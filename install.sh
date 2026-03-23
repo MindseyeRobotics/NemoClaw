@@ -108,7 +108,7 @@ print_done() {
     local _token_dir
     _token_dir="$(mktemp -d)"
     if openshell sandbox download "$sandbox_name" /sandbox/.openclaw/openclaw.json "$_token_dir" >/dev/null 2>&1 \
-       && [[ -f "$_token_dir/openclaw.json" ]]; then
+      && [[ -f "$_token_dir/openclaw.json" ]]; then
       token="$(python3 -c "
 import json, sys
 try:
