@@ -20,7 +20,7 @@ const R = _useColor ? "\x1b[0m" : "";
 const RD = _useColor ? "\x1b[1;31m" : "";
 const YW = _useColor ? "\x1b[1;33m" : "";
 
-const { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName } = require("./lib/runner");
+const { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName, getDashboardUrl } = require("./lib/runner");
 const {
   ensureApiKey,
   ensureGithubToken,
@@ -323,6 +323,9 @@ function sandboxStatus(sandboxName) {
   if (nimStat.running) {
     console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
   }
+
+  const dashboardUrl = getDashboardUrl(sandboxName);
+  console.log(`    Dashboard: ${dashboardUrl}`);
   console.log("");
 }
 

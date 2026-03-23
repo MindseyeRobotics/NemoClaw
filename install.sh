@@ -101,6 +101,30 @@ print_done() {
   local elapsed=$((SECONDS - _INSTALL_START))
   local sandbox_name
   sandbox_name="$(resolve_default_sandbox_name)"
+
+  # Read the gateway auth token from the sandbox's openclaw.json
+  local token=""
+  if command_exists openshell && [[ -n "$sandbox_name" ]]; then
+    local _token_dir
+    _token_dir="$(mktemp -d)"
+    if openshell sandbox download "$sandbox_name" /sandbox/.openclaw/openclaw.json "$_token_dir" >/dev/null 2>&1 \
+       && [[ -f "$_token_dir/openclaw.json" ]]; then
+      token="$(python3 -c "
+import json, sys
+try:
+    cfg = json.load(open('${_token_dir}/openclaw.json'))
+    print(cfg.get('gateway',{}).get('auth',{}).get('token',''))
+except Exception:
+    pass
+" 2>/dev/null | grep -xE '[0-9a-f]{64}' | head -1)" || token=""
+    fi
+    command -v rm &>/dev/null && rm -rf "$_token_dir" 2>/dev/null || true
+  fi
+  local dashboard_url="http://127.0.0.1:18789/"
+  if [[ -n "$token" ]]; then
+    dashboard_url="http://127.0.0.1:18789/#token=${token}"
+  fi
+
   info "=== Installation complete ==="
   printf "\n"
   printf "  ${C_GREEN}${C_BOLD}NemoClaw${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$elapsed"
@@ -109,6 +133,7 @@ print_done() {
   printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
   printf "\n"
   printf "  ${C_GREEN}Next:${C_RESET}\n"
+  printf "  ${C_BOLD}Dashboard${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$dashboard_url"
   printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
   printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
   printf "\n"

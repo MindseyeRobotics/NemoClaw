@@ -9,7 +9,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
-const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
+const { ROOT, SCRIPTS, run, runCapture, shellQuote, getDashboardUrl } = require("./runner");
 const {
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,
@@ -1038,8 +1038,9 @@ function printDashboard(sandboxName, model, provider) {
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
   console.log("");
+  const dashboardUrl = getDashboardUrl(sandboxName);
   console.log(`  ${"─".repeat(50)}`);
-  // console.log(`  Dashboard    http://localhost:18789/`);
+  console.log(`  Dashboard    ${dashboardUrl}`);
   console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
   console.log(`  Model        ${model} (${providerLabel})`);
   console.log(`  NIM          ${nimLabel}`);

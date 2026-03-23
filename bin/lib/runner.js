@@ -85,4 +85,38 @@ function validateName(name, label = "name") {
   return name;
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName };
+/**
+ * Read the gateway auth token from a sandbox's openclaw.json.
+ * Returns the token string, or "" if it cannot be read.
+ */
+function readSandboxToken(sandboxName) {
+  const tmpDir = require("os").tmpdir();
+  const destDir = path.join(tmpDir, `nemoclaw-token-${Date.now()}`);
+  try {
+    require("fs").mkdirSync(destDir, { recursive: true });
+    execSync(
+      `openshell sandbox download ${shellQuote(sandboxName)} /sandbox/.openclaw/openclaw.json ${shellQuote(destDir)}`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], cwd: ROOT, timeout: 15000 }
+    );
+    const configPath = path.join(destDir, "openclaw.json");
+    const cfg = JSON.parse(require("fs").readFileSync(configPath, "utf-8"));
+    const token = (cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token) || "";
+    return /^[0-9a-f]{64}$/.test(token) ? token : "";
+  } catch {
+    return "";
+  } finally {
+    try { require("fs").rmSync(destDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+/**
+ * Build the full dashboard URL with auth token for a sandbox.
+ * Returns the URL string, or the bare URL if the token cannot be read.
+ */
+function getDashboardUrl(sandboxName, port = 18789) {
+  const token = readSandboxToken(sandboxName);
+  const base = `http://127.0.0.1:${port}/`;
+  return token ? `${base}#token=${token}` : base;
+}
+
+module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName, readSandboxToken, getDashboardUrl };
