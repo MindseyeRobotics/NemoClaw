@@ -38,8 +38,8 @@ const { addGpuAgent: addGpuAgentImpl } = require("./lib/sandbox-add-gpu-agent");
 
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
-  "start", "stop", "status", "debug", "uninstall",  "sandbox-init",
-  "add-gpu-agent",
+  "start", "stop", "status", "debug", "uninstall", "sandbox-init",
+  "add-gpu-agent", "resume",
   "help", "--help", "-h", "--version", "-v",
 ]);
 
@@ -535,6 +535,50 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
+function sandboxMount(sandboxName, actionArgs) {
+  const mountPoint = actionArgs[0]
+    ? shellQuote(actionArgs[0])
+    : shellQuote(path.join(os.homedir(), "nemoclaw-sandbox", sandboxName));
+  run(`bash "${SCRIPTS}/mount-sandbox.sh" mount ${shellQuote(sandboxName)} ${mountPoint}`);
+}
+
+function sandboxUnmount(sandboxName, actionArgs) {
+  const mountPoint = actionArgs[0]
+    ? shellQuote(actionArgs[0])
+    : shellQuote(path.join(os.homedir(), "nemoclaw-sandbox", sandboxName));
+  run(`bash "${SCRIPTS}/mount-sandbox.sh" unmount ${shellQuote(sandboxName)} ${mountPoint}`);
+}
+
+function sandboxBackup(sandboxName) {
+  run(`bash "${SCRIPTS}/backup-workspace.sh" backup ${shellQuote(sandboxName)}`);
+}
+
+function sandboxRestore(sandboxName, actionArgs) {
+  const timestamp = actionArgs[0] ? shellQuote(actionArgs[0]) : "";
+  run(`bash "${SCRIPTS}/backup-workspace.sh" restore ${shellQuote(sandboxName)} ${timestamp}`);
+}
+
+function resume(args) {
+  const name = args[0] || registry.listSandboxes().defaultSandbox;
+  if (!name) {
+    console.error(`  Usage: nemoclaw resume <sandbox-name>`);
+    console.error(`  No sandbox name given and no default sandbox registered.`);
+    process.exit(1);
+  }
+  validateName(name, "sandbox name");
+  const envParts = [];
+  if (args.includes("--port")) {
+    const idx = args.indexOf("--port");
+    if (args[idx + 1]) envParts.push(`DASHBOARD_PORT=${shellQuote(args[idx + 1])}`);
+  }
+  if (args.includes("--mount-point")) {
+    const idx = args.indexOf("--mount-point");
+    if (args[idx + 1]) envParts.push(`MOUNT_POINT=${shellQuote(args[idx + 1])}`);
+  }
+  const envPrefix = envParts.length > 0 ? envParts.join(" ") + " " : "";
+  run(`${envPrefix}bash "${SCRIPTS}/resume.sh" ${shellQuote(name)}`);
+}
+
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
   if (!skipConfirm) {
@@ -579,6 +623,13 @@ function help() {
     nemoclaw <name> status           Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
+
+  ${G}Data & Filesystem:${R}
+    nemoclaw <name> mount ${D}[path]${R}     Mount sandbox data via SSHFS
+    nemoclaw <name> unmount ${D}[path]${R}   Unmount sandbox data
+    nemoclaw <name> backup           Back up all sandbox data locally
+    nemoclaw <name> restore ${D}[ts]${R}     Restore from a backup ${D}(latest if no timestamp)${R}
+    ${B}nemoclaw resume ${D}[name]${R}            Resume sandbox after reboot ${D}(backup + restore + mount)${R}
 
   ${G}Policy Presets:${R}
     nemoclaw <name> policy-add       Add a network or filesystem policy preset
@@ -635,6 +686,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "status":      showStatus(); break;
       case "debug":       debug(args); break;
       case "uninstall":   uninstall(args); break;
+      case "resume":      resume(args); break;
       case "list":        listSandboxes(); break;
       case "--version":
       case "-v": {
@@ -661,10 +713,14 @@ const [cmd, ...args] = process.argv.slice(2);
       case "logs":        sandboxLogs(cmd, actionArgs.includes("--follow")); break;
       case "policy-add":  await sandboxPolicyAdd(cmd); break;
       case "policy-list": sandboxPolicyList(cmd); break;
+      case "mount":       sandboxMount(cmd, actionArgs); break;
+      case "unmount":     sandboxUnmount(cmd, actionArgs); break;
+      case "backup":      sandboxBackup(cmd); break;
+      case "restore":     sandboxRestore(cmd, actionArgs); break;
       case "destroy":     await sandboxDestroy(cmd, actionArgs); break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, resume, status, logs, policy-add, policy-list, destroy`);
+        console.error(`  Valid actions: connect, resume, status, logs, mount, unmount, backup, restore, policy-add, policy-list, destroy`);
         process.exit(1);
     }
     return;
