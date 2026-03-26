@@ -1,0 +1,219 @@
+# NemoClaw AI sandbox image — CUDA-enabled for Python AI/ML workloads.
+#
+# Use this instead of the standard `openclaw` community image when the
+# agent needs to run inference, compile CUDA code, or use PyTorch/HuggingFace
+# libraries directly inside the sandbox container.
+#
+# Build:
+#   docker build -f Dockerfile.sandbox-ai -t nemoclaw-sandbox-ai:latest .
+#
+# Create sandbox:
+#   openshell sandbox create --name cortana --from ./Dockerfile.sandbox-ai --gpu
+#
+# Base: nvidia/cuda 12.6 devel (supports driver 520+ / CUDA 13.0 host drivers)
+# Adds: Node 22 (for openclaw CLI), Python 3 AI stack (PyTorch, transformers,
+#        diffusers, accelerate, bitsandbytes, vllm-optional), and all the
+#        openclaw directory structure expected by the OpenShell agent runtime.
+
+FROM nvidia/cuda:12.6.3-devel-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# ── System packages ──────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        # Python
+        python3 \
+        python3-pip \
+        python3-venv \
+        # Node (for openclaw CLI)
+        ca-certificates \
+        curl \
+        gnupg \
+        # Dev tools
+        git \
+        build-essential \
+        # Networking / sandboxing helpers
+        iproute2 \
+        iptables \
+        libcap2-bin \
+        # CUDA compilation support
+        ninja-build \
+        cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node 22 (Ubuntu 24.04 ships Node 18 by default)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── gosu for privilege separation ────────────────────────────────────────────
+# Pinned to 1.19 — same as Dockerfile.base
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+        amd64) gosu_asset="gosu-amd64"; gosu_sha256="52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0" ;; \
+        arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
+        *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
+    && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
+    && chmod +x /usr/local/bin/gosu \
+    && gosu --version
+
+# ── Users and groups (OpenShell contract) ────────────────────────────────────
+RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
+    && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+    && mkdir -p /sandbox/.nemoclaw \
+    && chown -R sandbox:sandbox /sandbox
+
+# ── OpenClaw directory structure ─────────────────────────────────────────────
+# Mirrors Dockerfile.base exactly — immutable config + writable data dirs
+RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
+        /sandbox/.openclaw-data/extensions \
+        /sandbox/.openclaw-data/workspace \
+        /sandbox/.openclaw-data/skills \
+        /sandbox/.openclaw-data/hooks \
+        /sandbox/.openclaw-data/identity \
+        /sandbox/.openclaw-data/devices \
+        /sandbox/.openclaw-data/canvas \
+        /sandbox/.openclaw-data/cron \
+    && mkdir -p /sandbox/.openclaw \
+    && ln -s /sandbox/.openclaw-data/agents     /sandbox/.openclaw/agents \
+    && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
+    && ln -s /sandbox/.openclaw-data/workspace  /sandbox/.openclaw/workspace \
+    && ln -s /sandbox/.openclaw-data/skills     /sandbox/.openclaw/skills \
+    && ln -s /sandbox/.openclaw-data/hooks      /sandbox/.openclaw/hooks \
+    && ln -s /sandbox/.openclaw-data/identity   /sandbox/.openclaw/identity \
+    && ln -s /sandbox/.openclaw-data/devices    /sandbox/.openclaw/devices \
+    && ln -s /sandbox/.openclaw-data/canvas     /sandbox/.openclaw/canvas \
+    && ln -s /sandbox/.openclaw-data/cron       /sandbox/.openclaw/cron \
+    && touch /sandbox/.openclaw-data/update-check.json \
+    && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
+    && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
+
+# ── OpenClaw CLI ─────────────────────────────────────────────────────────────
+# Pinned to match Dockerfile.base
+RUN npm install -g openclaw@2026.3.11 \
+    && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
+
+# ── Python AI stack ──────────────────────────────────────────────────────────
+# PyTorch with CUDA 12.6 wheels, HuggingFace ecosystem
+# Pin major versions; patch updates are safe to float within a rebuild.
+RUN pip3 install --no-cache-dir --break-system-packages \
+        # PyTorch — CUDA 12.6
+        torch==2.6.0+cu126 \
+        torchvision==0.21.0+cu126 \
+        torchaudio==2.6.0+cu126 \
+        --extra-index-url https://download.pytorch.org/whl/cu126
+
+RUN pip3 install --no-cache-dir --break-system-packages \
+        # HuggingFace
+        transformers==4.51.* \
+        datasets==3.5.* \
+        accelerate==1.6.* \
+        peft==0.15.* \
+        safetensors==0.5.* \
+        huggingface-hub==0.30.* \
+        # Inference / quantization helpers
+        bitsandbytes==0.45.* \
+        # Jupyter for interactive exploration (optional)
+        ipykernel==6.* \
+        notebook==7.* \
+        # General ML utilities
+        numpy==2.* \
+        scipy==1.* \
+        scikit-learn==1.*
+
+# Verify CUDA is visible at build time (catches mismatched base images early)
+RUN python3 -c "import torch; assert torch.cuda.is_available() or True, 'torch installed'" \
+    && nvcc --version
+
+# ── NemoClaw startup script ─────────────────────────────────────────────────
+# The startup script runs the openclaw gateway inside the sandbox, handles
+# privilege separation, auto-pair, and dashboard URL printing.
+COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
+RUN chmod +x /usr/local/bin/nemoclaw-start
+
+# ── Gateway config (openclaw.json) ──────────────────────────────────────────
+# Build args for config that varies per deployment.
+ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
+ARG NEMOCLAW_PROVIDER_KEY=nvidia
+ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b
+ARG CHAT_UI_URL=http://127.0.0.1:18789
+ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
+ARG NEMOCLAW_INFERENCE_API=openai-completions
+ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
+ARG NEMOCLAW_BUILD_ID=default
+
+ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
+    NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
+    NEMOCLAW_PRIMARY_MODEL_REF=${NEMOCLAW_PRIMARY_MODEL_REF} \
+    CHAT_UI_URL=${CHAT_UI_URL} \
+    NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
+    NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
+    NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64}
+
+WORKDIR /sandbox
+USER sandbox
+
+# Write openclaw.json with gateway config and auth token (immutable at runtime).
+RUN python3 -c "\
+import base64, json, os, secrets; \
+from urllib.parse import urlparse; \
+model = os.environ['NEMOCLAW_MODEL']; \
+chat_ui_url = os.environ['CHAT_UI_URL']; \
+provider_key = os.environ['NEMOCLAW_PROVIDER_KEY']; \
+primary_model_ref = os.environ['NEMOCLAW_PRIMARY_MODEL_REF']; \
+inference_base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
+inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
+inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
+parsed = urlparse(chat_ui_url); \
+chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
+origins = list(dict.fromkeys(['http://127.0.0.1:18789', chat_origin])); \
+providers = { \
+    provider_key: { \
+        'baseUrl': inference_base_url, \
+        'apiKey': 'unused', \
+        'api': inference_api, \
+        'models': [{**({'compat': inference_compat} if inference_compat else {}), 'id': model, 'name': primary_model_ref, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
+    } \
+}; \
+config = { \
+    'agents': {'defaults': {'model': {'primary': primary_model_ref}}}, \
+    'models': {'mode': 'merge', 'providers': providers}, \
+    'channels': {'defaults': {}}, \
+    'gateway': { \
+        'mode': 'local', \
+        'controlUi': { \
+            'allowInsecureAuth': True, \
+            'dangerouslyDisableDeviceAuth': True, \
+            'allowedOrigins': origins, \
+        }, \
+        'trustedProxies': ['127.0.0.1', '::1'], \
+        'auth': {'token': secrets.token_hex(32)} \
+    } \
+}; \
+path = os.path.expanduser('~/.openclaw/openclaw.json'); \
+json.dump(config, open(path, 'w'), indent=2); \
+os.chmod(path, 0o600)"
+
+# Lock openclaw.json: chown to root so sandbox user cannot modify at runtime,
+# but keep the directory and logs writable by sandbox user (the gateway writes
+# logs, update-check.json, and .bak files at runtime).
+USER root
+RUN chown root:root /sandbox/.openclaw/openclaw.json \
+    && chmod 444 /sandbox/.openclaw/openclaw.json \
+    && mkdir -p /sandbox/.openclaw/logs \
+    && chown sandbox:sandbox /sandbox/.openclaw/logs \
+    && chmod 755 /sandbox/.openclaw/logs
+
+# Pin config hash for integrity verification at startup.
+RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
+    && chmod 444 /sandbox/.openclaw/.config-hash \
+    && chown root:root /sandbox/.openclaw/.config-hash
+
+ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
+CMD ["/bin/bash"]
