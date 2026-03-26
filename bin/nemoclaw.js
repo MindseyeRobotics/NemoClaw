@@ -31,6 +31,7 @@ const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
 const { parseGatewayInference } = require("./lib/inference-config");
+const { sandboxResume: sandboxResumeImpl, DASHBOARD_PORT } = require("./lib/sandbox-resume");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -391,6 +392,28 @@ function sandboxConnect(sandboxName) {
   runInteractive(`openshell sandbox connect ${qn}`);
 }
 
+/**
+ * Ensure the openclaw gateway is running inside the sandbox.
+ * If it's not running, starts it. Then (re-)establishes the port forward
+ * and prints the dashboard URL with auth token.
+ */
+function sandboxResume(sandboxName) {
+  const result = sandboxResumeImpl(sandboxName);
+
+  if (result.error) {
+    process.exit(1);
+  }
+
+  console.log("");
+  console.log(`  ${G}${B}Dashboard:${R}`);
+  if (result.token) {
+    console.log(`    http://127.0.0.1:${DASHBOARD_PORT}/#token=${result.token}`);
+  } else {
+    console.log(`    http://127.0.0.1:${DASHBOARD_PORT}/`);
+  }
+  console.log("");
+}
+
 function sandboxStatus(sandboxName) {
   const sb = registry.getSandbox(sandboxName);
   const live = parseGatewayInference(
@@ -498,6 +521,7 @@ function help() {
   ${G}Sandbox Management:${R}
     ${B}nemoclaw list${R}                    List all sandboxes
     nemoclaw <name> connect          Shell into a running sandbox
+    ${B}nemoclaw <name> resume${R}           Ensure gateway is running + forward port 18789
     nemoclaw <name> status           Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
@@ -577,6 +601,7 @@ const [cmd, ...args] = process.argv.slice(2);
 
     switch (action) {
       case "connect":     sandboxConnect(cmd); break;
+      case "resume":      sandboxResume(cmd); break;
       case "status":      sandboxStatus(cmd); break;
       case "logs":        sandboxLogs(cmd, actionArgs.includes("--follow")); break;
       case "policy-add":  await sandboxPolicyAdd(cmd); break;
@@ -584,7 +609,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "destroy":     await sandboxDestroy(cmd, actionArgs); break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(`  Valid actions: connect, resume, status, logs, policy-add, policy-list, destroy`);
         process.exit(1);
     }
     return;
