@@ -101,8 +101,11 @@ if [[ -f "${SANDBOXES_FILE}" ]]; then
   done < <(python3 -c "
 import json, sys
 d = json.load(open('${SANDBOXES_FILE}'))
-for sb in d.get('sandboxes', []):
-    print(sb.get('name',''))
+sbs = d.get('sandboxes', {})
+if isinstance(sbs, dict):
+    for sb in sbs.values(): print(sb.get('name',''))
+else:
+    for sb in sbs: print(sb.get('name',''))
 " 2>/dev/null || true)
 fi
 
@@ -115,10 +118,25 @@ fi
 # ── Step 3: Find nemoclaw binary ───────────────────────────────────────────────
 NEMOCLAW_BIN="$(command -v nemoclaw 2>/dev/null || true)"
 if [[ -z "${NEMOCLAW_BIN}" ]]; then
-  # Try npm global bin
-  NEMOCLAW_BIN="$(npm bin -g 2>/dev/null)/nemoclaw"
-  [[ -x "${NEMOCLAW_BIN}" ]] || fatal "nemoclaw binary not found. Run 'npm link' from the NemoClaw directory."
+  # npm bin -g was removed in npm 8+; use npm prefix -g instead
+  NPM_PREFIX="$(npm prefix -g 2>/dev/null || true)"
+  if [[ -n "${NPM_PREFIX}" && -x "${NPM_PREFIX}/bin/nemoclaw" ]]; then
+    NEMOCLAW_BIN="${NPM_PREFIX}/bin/nemoclaw"
+  fi
 fi
+if [[ -z "${NEMOCLAW_BIN}" ]]; then
+  # Fallback: search nvm versions
+  NEMOCLAW_BIN="$(find "${HOME}/.nvm/versions" -name nemoclaw -type f 2>/dev/null | head -1 || true)"
+fi
+[[ -n "${NEMOCLAW_BIN}" && -x "${NEMOCLAW_BIN}" ]] || {
+  # Final fallback: run directly from the repo via node
+  if [[ -f "${NEMOCLAW_ROOT}/bin/nemoclaw.js" ]]; then
+    NEMOCLAW_BIN="node ${NEMOCLAW_ROOT}/bin/nemoclaw.js"
+    info "nemoclaw not linked globally — using repo binary directly"
+  else
+    fatal "nemoclaw binary not found. Run 'npm link' from ${NEMOCLAW_ROOT}"
+  fi
+}
 info "nemoclaw binary: ${NEMOCLAW_BIN}"
 
 # ── Step 4: Write resume-all-sandboxes.sh helper ──────────────────────────────
@@ -129,11 +147,18 @@ cat >"${RESUME_SCRIPT}" <<RESUME_SCRIPT_CONTENT
 # Resume all NemoClaw sandboxes after the gateway container starts.
 set -euo pipefail
 
-NEMOCLAW="${NEMOCLAW_BIN}"
+# shellcheck disable=SC2139
+NEMOCLAW_CMD="${NEMOCLAW_BIN}"
 MAX_GATEWAY_WAIT=120
 POLL_INTERVAL=3
 
 log() { echo "\$(date '+%H:%M:%S') [nemoclaw-autostart] \$*"; }
+
+nemoclaw_run() {
+  # Supports both "nemoclaw" and "node /path/to/nemoclaw.js" forms
+  # shellcheck disable=SC2086
+  \${NEMOCLAW_CMD} "\$@"
+}
 
 # Wait for the gateway container to come up
 log "Waiting for gateway to become ready..."
@@ -158,7 +183,7 @@ if [[ -f "\${SANDBOXES_FILE}" ]]; then
   while IFS= read -r name; do
     [[ -z "\${name}" ]] && continue
     log "Resuming sandbox '\${name}'..."
-    if "\${NEMOCLAW}" "\${name}" resume; then
+    if nemoclaw_run "\${name}" resume; then
       log "  ✓ \${name} resumed"
       RESUMED=\$((RESUMED + 1))
     else
@@ -168,8 +193,11 @@ if [[ -f "\${SANDBOXES_FILE}" ]]; then
   done < <(python3 -c "
 import json, sys
 d = json.load(open('\${SANDBOXES_FILE}'))
-for sb in d.get('sandboxes', []):
-    print(sb.get('name',''))
+sbs = d.get('sandboxes', {})
+if isinstance(sbs, dict):
+    for sb in sbs.values(): print(sb.get('name',''))
+else:
+    for sb in sbs: print(sb.get('name',''))
 " 2>/dev/null || true)
 fi
 
