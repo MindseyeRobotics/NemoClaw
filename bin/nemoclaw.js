@@ -36,8 +36,7 @@ const { parseGatewayInference } = require("./lib/inference-config");
 
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
-  "start", "stop", "status", "debug", "uninstall",
-  "help", "--help", "-h", "--version", "-v",
+  "start", "stop", "status", "debug", "uninstall",  "sandbox-init",  "help", "--help", "-h", "--version", "-v",
 ]);
 
 const REMOTE_UNINSTALL_URL = "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh";
@@ -83,6 +82,93 @@ async function onboard(args) {
   }
   const nonInteractive = args.includes("--non-interactive");
   await runOnboard({ nonInteractive });
+}
+
+async function sandboxInitCmd(args) {
+  const { sandboxInit } = require("./lib/sandbox-init");
+
+  // Parse arguments
+  let sandboxName = null;
+  let agentName = null;
+  let agentId = null;
+  let soulFile = null;
+  let identityFile = null;
+  let agentsFile = null;
+  let userFile = null;
+  let extraPolicies = [];
+  let skipGithub = false;
+  let parentAgentId = null;
+  let nonInteractive = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--agent-name")       { agentName = args[++i]; }
+    else if (a === "--agent-id")    { agentId = args[++i]; }
+    else if (a === "--soul")        { soulFile = args[++i]; }
+    else if (a === "--identity")    { identityFile = args[++i]; }
+    else if (a === "--agents")      { agentsFile = args[++i]; }
+    else if (a === "--user")        { userFile = args[++i]; }
+    else if (a === "--policy")      { extraPolicies.push(args[++i]); }
+    else if (a === "--no-github")   { skipGithub = true; }
+    else if (a === "--parent-agent") { parentAgentId = args[++i]; }
+    else if (a === "--non-interactive") { nonInteractive = true; }
+    else if (a === "--help" || a === "-h") {
+      console.log([
+        "",
+        "  nemoclaw sandbox-init <sandbox-name> [options]",
+        "",
+        "  Idempotently bootstrap an existing sandbox with workspace files,",
+        "  network policies, Git credentials, and an agent config entry.",
+        "",
+        "  Options:",
+        "    --agent-name <name>        Display name for the agent  (default: sandbox name)",
+        "    --agent-id   <id>          Agent identifier            (default: sandbox name)",
+        "    --soul       <file>        Path to a custom SOUL.md to upload",
+        "    --identity   <file>        Path to a custom IDENTITY.md to upload",
+        "    --agents     <file>        Path to a custom AGENTS.md to upload",
+        "    --user       <file>        Path to a custom USER.md to upload",
+        "    --policy     <preset>      Extra policy preset to apply (repeatable)",
+        "    --no-github                Skip GitHub policy + credential setup",
+        "    --parent-agent <id>        Register as subagent of another agent",
+        "    --non-interactive          Never prompt; fail if required info is missing",
+        "",
+        "  Examples:",
+        "    nemoclaw sandbox-init cortana",
+        '    nemoclaw sandbox-init robotics-team --agent-name "Robotics Team" --parent-agent cortana',
+        "    nemoclaw sandbox-init my-agent --soul ./my-soul.md --policy npm --no-github",
+        "",
+      ].join("\n"));
+      process.exit(0);
+    }
+    else if (!a.startsWith("--"))   { sandboxName = a; }
+    else {
+      console.error(`  Unknown option: ${a}`);
+      console.error("  Usage: nemoclaw sandbox-init <sandbox-name> [options]");
+      console.error("  Run 'nemoclaw sandbox-init --help' for details.");
+      process.exit(1);
+    }
+  }
+
+  if (!sandboxName) {
+    console.error("  Usage: nemoclaw sandbox-init <sandbox-name> [options]");
+    console.error("  Run 'nemoclaw sandbox-init --help' for details.");
+    process.exit(1);
+  }
+
+  validateName(sandboxName, "sandbox name");
+
+  await sandboxInit(sandboxName, {
+    agentName: agentName || sandboxName,
+    agentId: agentId || sandboxName,
+    soulFile,
+    identityFile,
+    agentsFile,
+    userFile,
+    extraPolicies,
+    skipGithub,
+    parentAgentId,
+    nonInteractive,
+  });
 }
 
 async function setup() {
@@ -406,6 +492,7 @@ function help() {
 
   ${G}Getting Started:${R}
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
+    ${B}nemoclaw sandbox-init <name>${R}     Bootstrap workspace files, policies, and agent config
     nemoclaw setup-spark             Set up on DGX Spark ${D}(fixes cgroup v2 + Docker)${R}
 
   ${G}Sandbox Management:${R}
@@ -459,8 +546,9 @@ const [cmd, ...args] = process.argv.slice(2);
   // Global commands
   if (GLOBAL_COMMANDS.has(cmd)) {
     switch (cmd) {
-      case "onboard":     await onboard(args); break;
-      case "setup":       await setup(); break;
+      case "onboard":       await onboard(args); break;
+      case "sandbox-init":  await sandboxInitCmd(args); break;
+      case "setup":         await setup(); break;
       case "setup-spark": await setupSpark(); break;
       case "deploy":      await deploy(args[0]); break;
       case "start":       await start(); break;
