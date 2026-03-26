@@ -32,12 +32,15 @@ const nim = require("./lib/nim");
 const policies = require("./lib/policies");
 const { parseGatewayInference } = require("./lib/inference-config");
 const { sandboxResume: sandboxResumeImpl, DASHBOARD_PORT } = require("./lib/sandbox-resume");
+const { addGpuAgent: addGpuAgentImpl } = require("./lib/sandbox-add-gpu-agent");
 
 // ── Global commands ──────────────────────────────────────────────
 
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
-  "start", "stop", "status", "debug", "uninstall",  "sandbox-init",  "help", "--help", "-h", "--version", "-v",
+  "start", "stop", "status", "debug", "uninstall",  "sandbox-init",
+  "add-gpu-agent",
+  "help", "--help", "-h", "--version", "-v",
 ]);
 
 const REMOTE_UNINSTALL_URL = "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh";
@@ -83,6 +86,58 @@ async function onboard(args) {
   }
   const nonInteractive = args.includes("--non-interactive");
   await runOnboard({ nonInteractive });
+}
+
+async function addGpuAgentCmd(args) {
+  let agentName = null;
+  let parentName = null;
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--help" || a === "-h") {
+      console.log([
+        "",
+        "  Usage: nemoclaw add-gpu-agent <agent-name> [--parent <parent-name>]",
+        "",
+        "  Create a GPU-enabled agent sandbox and register it in the parent agent's",
+        "  openclaw dashboard. Enables GPU time-slicing if only one physical GPU is",
+        "  available so multiple agents can share it.",
+        "",
+        "  Options:",
+        "    --parent <name>    Parent sandbox to register under (default: defaultSandbox)",
+        "",
+        "  Examples:",
+        "    nemoclaw add-gpu-agent jarvis",
+        "    nemoclaw add-gpu-agent jarvis --parent cortana",
+        "",
+      ].join("\n"));
+      process.exit(0);
+    } else if (a === "--parent") {
+      parentName = args[++i];
+      if (!parentName) {
+        console.error("  --parent requires a value");
+        process.exit(1);
+      }
+    } else if (!a.startsWith("--")) {
+      agentName = a;
+    } else {
+      console.error(`  Unknown option: ${a}`);
+      console.error("  Usage: nemoclaw add-gpu-agent <agent-name> [--parent <name>]");
+      process.exit(1);
+    }
+  }
+
+  if (!agentName) {
+    console.error("  Usage: nemoclaw add-gpu-agent <agent-name> [--parent <name>]");
+    console.error("  Run 'nemoclaw add-gpu-agent --help' for details.");
+    process.exit(1);
+  }
+
+  validateName(agentName, "agent name");
+  if (parentName) validateName(parentName, "parent name");
+
+  const result = await addGpuAgentImpl(agentName, { parentName: parentName || undefined });
+  if (!result.success) process.exit(1);
 }
 
 async function sandboxInitCmd(args) {
@@ -519,8 +574,7 @@ function help() {
     nemoclaw setup-spark             Set up on DGX Spark ${D}(fixes cgroup v2 + Docker)${R}
 
   ${G}Sandbox Management:${R}
-    ${B}nemoclaw list${R}                    List all sandboxes
-    nemoclaw <name> connect          Shell into a running sandbox
+    ${B}nemoclaw list${R}                    List all sandboxes           ${B}nemoclaw add-gpu-agent <name>${R}   Create a GPU-enabled agent + register in parent dashboard    nemoclaw <name> connect          Shell into a running sandbox
     ${B}nemoclaw <name> resume${R}           Ensure gateway is running + forward port 18789
     nemoclaw <name> status           Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
@@ -572,6 +626,7 @@ const [cmd, ...args] = process.argv.slice(2);
     switch (cmd) {
       case "onboard":       await onboard(args); break;
       case "sandbox-init":  await sandboxInitCmd(args); break;
+      case "add-gpu-agent": await addGpuAgentCmd(args); break;
       case "setup":         await setup(); break;
       case "setup-spark": await setupSpark(); break;
       case "deploy":      await deploy(args[0]); break;
