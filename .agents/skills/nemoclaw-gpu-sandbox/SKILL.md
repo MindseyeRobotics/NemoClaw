@@ -152,7 +152,7 @@ $ bash scripts/setup-autostart.sh
 ### What the script does
 
 1. Sets Docker restart policy to `unless-stopped` on the gateway container so Docker brings it back.
-2. Generates `scripts/resume-all-sandboxes.sh` — polls until the gateway is ready, then runs `nemoclaw <name> resume` for every sandbox in `~/.nemoclaw/sandboxes.json`.
+2. Generates `scripts/resume-all-sandboxes.sh` — polls until the gateway is ready, then runs `nemoclaw <name> resume` for every sandbox in `~/.nemoclaw/sandboxes.json`, then re-mounts each sandbox via SSHFS.
 3. Writes `~/.config/systemd/user/nemoclaw-autostart.service` — a oneshot service that runs the resume script after the network and Docker are up.
 4. Enables the service with `systemctl --user enable nemoclaw-autostart`.
 5. Optionally enables `loginctl enable-linger` so the service fires at boot even without an interactive login.
@@ -164,15 +164,43 @@ On every reboot:
 1. Docker starts the gateway container automatically.
 2. systemd user service starts and runs `resume-all-sandboxes.sh`.
 3. All registered sandboxes come up with their gateway and port-forward restored.
+4. Each sandbox is re-mounted via SSHFS at `~/nemoclaw-sandbox/<name>/` — stale mounts are force-cleared first with `fusermount -uz`.
+
+### Sandbox mounts after reboot
+
+After autostart runs, workspace files are accessible locally at:
+
+| Sandbox | Local mount path | Workspace | Agent sessions |
+|---------|-----------------|-----------|----------------|
+| cortana | `~/nemoclaw-sandbox/cortana/` | `workspace/` | `agents/` |
+| jarvis  | `~/nemoclaw-sandbox/jarvis/`  | `workspace/` | `agents/` |
+
+To mount a sandbox immediately (without rebooting):
+
+```console
+$ nemoclaw cortana mount
+$ nemoclaw jarvis mount
+```
+
+To check current mount status:
+
+```console
+$ mountpoint ~/nemoclaw-sandbox/cortana
+$ mountpoint ~/nemoclaw-sandbox/jarvis
+```
+
+See the `nemoclaw-mount-filesystem` skill for full SSHFS mount, backup, and restore documentation.
 
 ### Manual alternative (no autostart)
 
-If you prefer to resume manually after each reboot:
+If you prefer to resume and mount manually after each reboot:
 
 ```console
 $ nemoclaw start           # restart the gateway container
 $ nemoclaw cortana resume  # restore gateway + port-forward for cortana
 $ nemoclaw jarvis resume   # restore gateway + port-forward for jarvis
+$ nemoclaw cortana mount   # re-mount cortana workspace files
+$ nemoclaw jarvis mount    # re-mount jarvis workspace files
 ```
 
 ### Manage the service

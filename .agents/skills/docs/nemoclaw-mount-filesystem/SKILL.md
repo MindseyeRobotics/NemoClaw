@@ -112,6 +112,30 @@ $ nemoclaw resume
 
 After resume, the dashboard is available at `http://127.0.0.1:18789/` and the sandbox data is mounted at `~/nemoclaw-sandbox/my-assistant/`.
 
+## Persistent Mounts Across Reboots (Autostart)
+
+If you have run `scripts/setup-autostart.sh` (see the `nemoclaw-gpu-sandbox` skill, Step 5), the autostart systemd service automatically re-mounts all registered sandboxes on every reboot.
+
+The generated `scripts/resume-all-sandboxes.sh` performs these steps for each sandbox in `~/.nemoclaw/sandboxes.json`:
+
+1. Calls `nemoclaw <name> resume` to bring the sandbox back online.
+2. Checks if the mount point (`~/nemoclaw-sandbox/<name>`) is already mounted.
+3. If stale (e.g., leftover from a dirty shutdown), runs `fusermount -uz` to force-clear the mount.
+4. Calls `nemoclaw <name> mount` to establish a fresh SSHFS connection.
+
+This means after every reboot, workspace files are immediately accessible at `~/nemoclaw-sandbox/<name>/workspace/` with no manual steps required.
+
+### First-time mount setup
+
+Before autostart can re-mount, the sandbox must be mounted at least once manually so the SSH config entry and `sftp-server` upload are done:
+
+```console
+$ nemoclaw cortana mount
+$ nemoclaw jarvis mount
+```
+
+Subsequent mounts (including those done by autostart) skip the `sftp-server` upload because the binary is already present inside the sandbox.
+
 ### Flags
 
 | Flag                    | Description                    |
