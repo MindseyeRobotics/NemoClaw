@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-gpu-sandbox
-description: "Set up a GPU-accelerated NemoClaw sandbox using a custom CUDA image. Add multiple GPU agents on a single physical GPU using time-slicing via 'nemoclaw add-gpu-agent'. Resume a sandbox after a reboot or restart. Use when: gpu sandbox, gpu agent, cuda sandbox, pytorch sandbox, add agent, multi-agent gpu, time-slicing gpu, sandbox resume, post-onboard gpu, gpu enablement, add-gpu-agent, post-onboard-gpu, nemoclaw add-gpu-agent command."
+description: "Set up a GPU-accelerated NemoClaw sandbox using a custom CUDA image. Add multiple GPU agents on a single physical GPU using time-slicing via 'nemoclaw add-gpu-agent'. Resume a sandbox after a reboot or restart. Persist sandboxes across reboots via systemd autostart. Use when: gpu sandbox, gpu agent, cuda sandbox, pytorch sandbox, add agent, multi-agent gpu, time-slicing gpu, sandbox resume, post-onboard gpu, gpu enablement, add-gpu-agent, post-onboard-gpu, nemoclaw add-gpu-agent command, autostart, reboot, systemd, persist sandbox, restart policy."
 ---
 
 # NemoClaw GPU Sandbox Enablement
@@ -15,6 +15,7 @@ NemoClaw's default `nemoclaw onboard` creates a CPU-only sandbox. For AI/ML work
 |--------|---------|
 | `scripts/post-onboard-gpu.sh` | After `nemoclaw onboard`, replace the standard sandbox with a GPU-backed one |
 | `scripts/add-gpu-agent.sh` | Add a second (or third, etc.) named GPU agent that appears in the Agents tab |
+| `scripts/setup-autostart.sh` | Configure Docker restart policy + systemd user service so sandboxes survive reboots |
 | `Dockerfile.sandbox-ai` | CUDA 12.6 + PyTorch 2.6.0+cu126 + Node 22 + openclaw — source image for all GPU sandboxes |
 
 ---
@@ -127,6 +128,61 @@ This:
 2. Checks whether the openclaw gateway is already listening; starts it if not.
 3. Re-establishes the port-forward on `18789`.
 4. Prints the dashboard URL with the auth token.
+
+---
+
+## Step 5: Persist Sandboxes Across Reboots (`setup-autostart.sh`)
+
+By default, sandboxes do **not** survive a reboot:
+
+| Component | Survives reboot? | Reason |
+|---|---|---|
+| Gateway container (`openshell-cluster-nemoclaw`) | No | Docker restart policy defaults to `no` |
+| k3s + sandbox pods (cortana, jarvis) | No | Pods run inside the gateway container |
+| Port forwards (port 18789) | No | Background processes, not supervised |
+| openclaw gateway inside sandboxes | No | Started on-demand, no supervisor |
+| Config files (`~/.nemoclaw/`, `~/.openclaw/`) | **Yes** | Host filesystem |
+
+To make everything come back automatically after a reboot, run the autostart setup script once:
+
+```console
+$ bash scripts/setup-autostart.sh
+```
+
+### What the script does
+
+1. Sets Docker restart policy to `unless-stopped` on the gateway container so Docker brings it back.
+2. Generates `scripts/resume-all-sandboxes.sh` — polls until the gateway is ready, then runs `nemoclaw <name> resume` for every sandbox in `~/.nemoclaw/sandboxes.json`.
+3. Writes `~/.config/systemd/user/nemoclaw-autostart.service` — a oneshot service that runs the resume script after the network and Docker are up.
+4. Enables the service with `systemctl --user enable nemoclaw-autostart`.
+5. Optionally enables `loginctl enable-linger` so the service fires at boot even without an interactive login.
+
+### After setup
+
+On every reboot:
+
+1. Docker starts the gateway container automatically.
+2. systemd user service starts and runs `resume-all-sandboxes.sh`.
+3. All registered sandboxes come up with their gateway and port-forward restored.
+
+### Manual alternative (no autostart)
+
+If you prefer to resume manually after each reboot:
+
+```console
+$ nemoclaw start           # restart the gateway container
+$ nemoclaw cortana resume  # restore gateway + port-forward for cortana
+$ nemoclaw jarvis resume   # restore gateway + port-forward for jarvis
+```
+
+### Manage the service
+
+```console
+$ systemctl --user status  nemoclaw-autostart
+$ systemctl --user restart nemoclaw-autostart
+$ journalctl --user -u nemoclaw-autostart -f
+$ bash scripts/setup-autostart.sh --uninstall
+```
 
 ---
 
