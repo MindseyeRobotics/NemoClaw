@@ -90,4 +90,26 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Troubleshooting")).toBeTruthy();
     expect(r.out.includes("nemoclaw debug")).toBeTruthy();
   });
+
+  it("help shows Data & Filesystem section with mount/backup/resume", () => {
+    const r = run("help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Data & Filesystem")).toBeTruthy();
+    expect(r.out.includes("mount")).toBeTruthy();
+    expect(r.out.includes("unmount")).toBeTruthy();
+    expect(r.out.includes("backup")).toBeTruthy();
+    expect(r.out.includes("restore")).toBeTruthy();
+    expect(r.out.includes("resume")).toBeTruthy();
+  });
+
+  it("resume with no sandbox and empty registry exits 1", () => {
+    const r = run("resume");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("No sandbox name")).toBeTruthy();
+  });
+
+  it("resume with invalid sandbox name exits 1", () => {
+    const r = run("resume INVALID_NAME");
+    expect(r.code).toBe(1);
+  });
 });

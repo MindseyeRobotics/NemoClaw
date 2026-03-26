@@ -4,10 +4,15 @@
 
 set -euo pipefail
 
-WORKSPACE_PATH="/sandbox/.openclaw/workspace"
+# The writable data root inside the sandbox.  All agent-created files
+# (workspace, sessions, canvas, cron, identity, etc.) live here.
+DATA_ROOT="/sandbox/.openclaw-data"
 BACKUP_BASE="${HOME}/.nemoclaw/backups"
-FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md)
-DIRS=(memory)
+
+# Directories inside DATA_ROOT to back up.  Each is downloaded in full
+# so that any files or sub-folders the agents created are captured.
+# Order matters only for display; everything is backed up/restored.
+BACKUP_DIRS=(workspace agents canvas cron devices hooks identity skills)
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,8 +33,10 @@ Usage:
   $(basename "$0") restore <sandbox-name> [timestamp]
 
 Commands:
-  backup   Download workspace files from a sandbox to a timestamped local backup.
-  restore  Upload workspace files from a local backup into a sandbox.
+  backup   Download ALL sandbox data to a timestamped local backup.
+           Captures workspace files, agent sessions, canvas, cron jobs,
+           device pairings, hooks, identity, and skills.
+  restore  Upload a backup into a sandbox.
            If no timestamp is given, the most recent backup is used.
 
 Backup location: ${BACKUP_BASE}/<timestamp>/
@@ -49,30 +56,32 @@ do_backup() {
   mkdir -p "$dest"
   chmod 0700 "$dest"
 
-  info "Backing up workspace from sandbox '${sandbox}'..."
+  info "Backing up sandbox data from '${sandbox}'..."
 
   local count=0
-  for f in "${FILES[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/"; then
+
+  # Back up each data directory in full
+  for d in "${BACKUP_DIRS[@]}"; do
+    if openshell sandbox download "$sandbox" "${DATA_ROOT}/${d}/" "${dest}/${d}/" 2>&1; then
       count=$((count + 1))
+      info "  ✓ ${d}/"
     else
-      warn "Skipped ${f} (not found or download failed)"
+      warn "  Skipped ${d}/ (not found or empty)"
     fi
   done
 
-  for d in "${DIRS[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/"; then
-      count=$((count + 1))
-    else
-      warn "Skipped ${d}/ (not found or download failed)"
-    fi
-  done
-
-  if [ "$count" -eq 0 ]; then
-    fail "No files were backed up. Check that the sandbox '${sandbox}' exists and has workspace files."
+  # Also grab any loose files in DATA_ROOT (e.g. update-check.json)
+  if openshell sandbox download "$sandbox" "${DATA_ROOT}/update-check.json" "${dest}/" 2>/dev/null; then
+    count=$((count + 1))
   fi
 
-  info "Backup saved to ${dest}/ (${count} items)"
+  if [ "$count" -eq 0 ]; then
+    fail "No data was backed up. Check that the sandbox '${sandbox}' exists and has data."
+  fi
+
+  # Write a manifest so we know what's in this backup
+  find "$dest" -type f | wc -l >"${dest}/.file-count"
+  info "Backup saved to ${dest}/ (${count} directories, $(cat "${dest}/.file-count") files)"
 }
 
 do_restore() {
@@ -88,34 +97,31 @@ do_restore() {
   local src="${BACKUP_BASE}/${ts}"
   [ -d "$src" ] || fail "Backup directory not found: ${src}"
 
-  info "Restoring workspace to sandbox '${sandbox}' from ${src}..."
+  info "Restoring sandbox data to '${sandbox}' from ${src}..."
 
   local count=0
-  for f in "${FILES[@]}"; do
-    if [ -f "${src}/${f}" ]; then
-      if openshell sandbox upload "$sandbox" "${src}/${f}" "${WORKSPACE_PATH}/"; then
-        count=$((count + 1))
-      else
-        warn "Failed to restore ${f}"
-      fi
-    fi
-  done
 
-  for d in "${DIRS[@]}"; do
+  for d in "${BACKUP_DIRS[@]}"; do
     if [ -d "${src}/${d}" ]; then
-      if openshell sandbox upload "$sandbox" "${src}/${d}/" "${WORKSPACE_PATH}/${d}/"; then
+      if openshell sandbox upload "$sandbox" "${src}/${d}/" "${DATA_ROOT}/${d}/" 2>&1; then
         count=$((count + 1))
+        info "  ✓ ${d}/"
       else
-        warn "Failed to restore ${d}/"
+        warn "  Failed to restore ${d}/"
       fi
     fi
   done
 
-  if [ "$count" -eq 0 ]; then
-    fail "No files were restored. Check that the sandbox '${sandbox}' is running."
+  # Restore loose files
+  if [ -f "${src}/update-check.json" ]; then
+    openshell sandbox upload "$sandbox" "${src}/update-check.json" "${DATA_ROOT}/" 2>/dev/null || true
   fi
 
-  info "Restored ${count} items to sandbox '${sandbox}'."
+  if [ "$count" -eq 0 ]; then
+    fail "No data was restored. Check that the sandbox '${sandbox}' is running."
+  fi
+
+  info "Restored ${count} directories to sandbox '${sandbox}'."
 }
 
 # --- Main ---
