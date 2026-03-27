@@ -492,6 +492,20 @@ function sandboxStatus(sandboxName) {
   if (nimStat.running) {
     console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
   }
+
+  // Dashboard URL + auth token
+  const { DASHBOARD_PORT } = require("./lib/sandbox-resume");
+  const token = runCapture(
+    `openshell doctor exec -- kubectl exec ${sandboxName} -n openshell -- ` +
+      `bash -c "HOME=/sandbox python3 -c \\"import json; cfg=json.load(open('/sandbox/.openclaw/openclaw.json')); print(cfg.get('gateway',{}).get('auth',{}).get('token',''))\\""`,
+    { ignoreError: true }
+  ) || null;
+  const tokenStr = token ? token.trim() : null;
+  const hash = tokenStr ? `#token=${tokenStr}` : "";
+  console.log(`    Dashboard: http://127.0.0.1:${DASHBOARD_PORT}/${hash}`);
+  if (!tokenStr) {
+    console.log(`    Token:     run 'nemoclaw ${sandboxName} resume' to start the gateway and retrieve token`);
+  }
   console.log("");
 }
 
