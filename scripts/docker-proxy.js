@@ -71,6 +71,7 @@ function resolveDockerSocket() {
 
 // [method, pathRegexp] pairs. If any matches, the request is forwarded
 // (subject to body validation for POST /containers/create).
+/** @type {Array<[string, RegExp]>} */
 const ALLOWED_ROUTES = [
   // Info / version
   ["GET",    /^\/v[\d.]+\/version$/],
@@ -325,7 +326,7 @@ server.on("upgrade", (req, socket, head) => {
   // Disable Nagle on the client-facing socket so the 101 response headers
   // are flushed immediately rather than being held waiting for container output.
   // Without this, the Docker CLI never receives the 101 and blocks before start.
-  socket.setNoDelay(true);
+  /** @type {import("net").Socket} */ (socket).setNoDelay(true);
 
   // Open a raw socket to the Docker daemon and replay the HTTP request so
   // the daemon sees the Upgrade header and upgrades the connection itself.

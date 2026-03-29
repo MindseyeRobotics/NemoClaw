@@ -39,6 +39,7 @@ function _sleep(ms) {
  * @param {string}   agentName          - Name for the new GPU agent sandbox
  * @param {object}   [opts]
  * @param {string}   [opts.parentName]  - Parent sandbox (default: defaultSandbox)
+ * @param {string}   [opts.model]       - Model override for the agent
  * @param {boolean}  [opts.quiet]       - Suppress informational output
  * @param {Function} [opts._sleep]      - Sleep override for testing
  * @returns {Promise<{ success: boolean, error: string|null }>}
