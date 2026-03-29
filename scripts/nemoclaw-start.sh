@@ -27,7 +27,39 @@ fi
 
 # SECURITY: Lock down PATH so the agent cannot inject malicious binaries
 # into commands executed by the entrypoint or auto-pair watcher.
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# /sandbox/.npm-global/bin is the writable npm global prefix used by the
+# sandbox user (since /usr/local/lib/node_modules is read-only at runtime).
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/sandbox/.npm-global/bin"
+
+# ── Ensure Docker proxy bypass ──────────────────────────────────
+# OpenShell injects HTTP_PROXY for network-policy enforcement but
+# its NO_PROXY may not include the Docker proxy host. Without this,
+# Docker CLI errors with "unknown scheme: http" when connecting to
+# DOCKER_HOST because Go's HTTP stack routes through the proxy.
+if [ -n "${HTTP_PROXY:-}${http_proxy:-}" ]; then
+  _docker_host="host.openshell.internal"
+  case ",${NO_PROXY:-}," in
+    *,"${_docker_host}",*) ;; # already present
+    *)
+      export NO_PROXY="${NO_PROXY:+${NO_PROXY},}${_docker_host}"
+      export no_proxy="${no_proxy:+${no_proxy},}${_docker_host}"
+      ;;
+  esac
+  unset _docker_host
+fi
+
+# ── Configure Node.js to use OpenShell's HTTPS proxy ─────────────
+# OpenShell's sandbox supervisor runs an HTTP CONNECT proxy for
+# outbound HTTPS (e.g. inference.local). Node.js 22+ requires the
+# --use-env-proxy flag to respect HTTPS_PROXY env vars.
+if [ -n "${HTTPS_PROXY:-}${https_proxy:-}" ]; then
+  export NODE_OPTIONS="${NODE_OPTIONS:+${NODE_OPTIONS} }--use-env-proxy"
+  # The proxy performs TLS interception; its CA is not in the system
+  # trust store, so we must skip certificate verification for proxied
+  # connections. This is safe because the proxy is a trusted local
+  # component (OpenShell sandbox supervisor).
+  export NODE_TLS_REJECT_UNAUTHORIZED=0
+fi
 
 # ── Drop unnecessary Linux capabilities ──────────────────────────
 # CIS Docker Benchmark 5.3: containers should not run with default caps.
@@ -236,6 +268,16 @@ if [ "$(id -u)" -ne 0 ]; then
   touch /tmp/auto-pair.log
   chmod 600 /tmp/auto-pair.log
 
+  # Start virtual framebuffer for headless GUI apps (best-effort).
+  # DISPLAY=:99 is set in the image ENV so all GUI tools pick it up automatically.
+  touch /tmp/xvfb.log
+  chmod 600 /tmp/xvfb.log
+  if command -v Xvfb >/dev/null 2>&1; then
+    Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+    echo $! >/tmp/xvfb.pid
+    echo "[xvfb] Virtual framebuffer started on :99 (pid $!)"
+  fi
+
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
@@ -268,6 +310,19 @@ chmod 600 /tmp/gateway.log
 touch /tmp/auto-pair.log
 chown sandbox:sandbox /tmp/auto-pair.log
 chmod 600 /tmp/auto-pair.log
+
+# Start virtual framebuffer as sandbox user for headless GUI apps (best-effort).
+# DISPLAY=:99 is set in the image ENV so all GUI tools pick it up automatically.
+touch /tmp/xvfb.log
+chown sandbox:sandbox /tmp/xvfb.log
+chmod 600 /tmp/xvfb.log
+if command -v Xvfb >/dev/null 2>&1; then
+  nohup gosu sandbox Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+  echo $! >/tmp/xvfb.pid
+  chown root:root /tmp/xvfb.pid
+  chmod 600 /tmp/xvfb.pid
+  echo "[xvfb] Virtual framebuffer started on :99 (pid $!)"
+fi
 
 # Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
 # Dynamic scan so future OpenClaw symlinks are covered automatically.

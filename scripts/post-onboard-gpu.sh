@@ -193,7 +193,7 @@ if ((GATEWAY_UP == 0)); then
     2>/dev/null || true
 
   # Start the gateway
-  eval "${SSH_CMD}" "HOME=/sandbox nohup openclaw gateway run > /sandbox/gateway.log 2>&1 &" 2>/dev/null || true
+  eval "${SSH_CMD}" "HTTPS_PROXY=http://10.200.0.1:3128 NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_OPTIONS=--use-env-proxy HOME=/sandbox nohup openclaw gateway run > /sandbox/gateway.log 2>&1 &" 2>/dev/null || true
 
   # Wait for gateway to come up
   for i in $(seq 1 $MAX_GATEWAY_WAIT); do

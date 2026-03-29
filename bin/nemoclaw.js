@@ -91,6 +91,7 @@ async function onboard(args) {
 async function addGpuAgentCmd(args) {
   let agentName = null;
   let parentName = null;
+  let model = null;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -105,10 +106,12 @@ async function addGpuAgentCmd(args) {
         "",
         "  Options:",
         "    --parent <name>    Parent sandbox to register under (default: defaultSandbox)",
+        "    --model <key>      Model key to assign to this agent (e.g. anthropic-prod/claude-sonnet-4-6)",
         "",
         "  Examples:",
         "    nemoclaw add-gpu-agent jarvis",
         "    nemoclaw add-gpu-agent jarvis --parent cortana",
+        "    nemoclaw add-gpu-agent jarvis --model anthropic-prod/claude-sonnet-4-6",
         "",
       ].join("\n"));
       process.exit(0);
@@ -116,6 +119,12 @@ async function addGpuAgentCmd(args) {
       parentName = args[++i];
       if (!parentName) {
         console.error("  --parent requires a value");
+        process.exit(1);
+      }
+    } else if (a === "--model") {
+      model = args[++i];
+      if (!model) {
+        console.error("  --model requires a value");
         process.exit(1);
       }
     } else if (!a.startsWith("--")) {
@@ -136,7 +145,7 @@ async function addGpuAgentCmd(args) {
   validateName(agentName, "agent name");
   if (parentName) validateName(parentName, "parent name");
 
-  const result = await addGpuAgentImpl(agentName, { parentName: parentName || undefined });
+  const result = await addGpuAgentImpl(agentName, { parentName: parentName || undefined, model: model || undefined });
   if (!result.success) process.exit(1);
 }
 
@@ -155,6 +164,8 @@ async function sandboxInitCmd(args) {
   let skipGithub = false;
   let parentAgentId = null;
   let nonInteractive = false;
+  let enableDocker = false;
+  let model = null;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -168,6 +179,8 @@ async function sandboxInitCmd(args) {
     else if (a === "--no-github")   { skipGithub = true; }
     else if (a === "--parent-agent") { parentAgentId = args[++i]; }
     else if (a === "--non-interactive") { nonInteractive = true; }
+    else if (a === "--docker")      { enableDocker = true; }
+    else if (a === "--model")       { model = args[++i]; }
     else if (a === "--help" || a === "-h") {
       console.log([
         "",
@@ -185,13 +198,16 @@ async function sandboxInitCmd(args) {
         "    --user       <file>        Path to a custom USER.md to upload",
         "    --policy     <preset>      Extra policy preset to apply (repeatable)",
         "    --no-github                Skip GitHub policy + credential setup",
+        "    --docker                   Apply docker + docker-proxy policies (enables Docker/Compose)",
         "    --parent-agent <id>        Register as subagent of another agent",
+        "    --model <key>              Model key for this agent (e.g. anthropic-prod/claude-sonnet-4-6)",
         "    --non-interactive          Never prompt; fail if required info is missing",
         "",
         "  Examples:",
         "    nemoclaw sandbox-init cortana",
         '    nemoclaw sandbox-init robotics-team --agent-name "Robotics Team" --parent-agent cortana',
         "    nemoclaw sandbox-init my-agent --soul ./my-soul.md --policy npm --no-github",
+        "    nemoclaw sandbox-init jarvis --model anthropic-prod/claude-sonnet-4-6",
         "",
       ].join("\n"));
       process.exit(0);
@@ -224,6 +240,8 @@ async function sandboxInitCmd(args) {
     skipGithub,
     parentAgentId,
     nonInteractive,
+    enableDocker,
+    model,
   });
 }
 

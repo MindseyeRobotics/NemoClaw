@@ -118,6 +118,12 @@ do_mount() {
   ensure_sftp_server "$sandbox"
 
   mkdir -p "$mountpoint"
+  # Ensure current user owns the mountpoint (a previous SSHFS mount may have
+  # left it owned by the sandbox uid, causing fusermount3 permission denied).
+  if [ "$(stat -c '%U' "$mountpoint")" != "$(id -un)" ]; then
+    sudo chown "$(id -un):$(id -gn)" "$mountpoint" \
+      || warn "Could not chown ${mountpoint} — mount may fail if owned by another user."
+  fi
 
   info "Mounting ${host}:${DATA_ROOT} → ${mountpoint}"
 

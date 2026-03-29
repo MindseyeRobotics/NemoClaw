@@ -67,6 +67,7 @@ is_running() {
 start_service() {
   local name="$1"
   shift
+  mkdir -p "$PIDDIR"
   if is_running "$name"; then
     info "$name already running (PID $(cat "$PIDDIR/$name.pid"))"
     return 0
@@ -97,7 +98,7 @@ stop_service() {
 show_status() {
   mkdir -p "$PIDDIR"
   echo ""
-  for svc in telegram-bridge cloudflared; do
+  for svc in docker-proxy telegram-bridge cloudflared gateway-relay; do
     if is_running "$svc"; then
       echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
     else
@@ -119,6 +120,8 @@ do_stop() {
   mkdir -p "$PIDDIR"
   stop_service cloudflared
   stop_service telegram-bridge
+  stop_service docker-proxy
+  stop_service gateway-relay
   info "All services stopped."
 }
 
@@ -131,6 +134,28 @@ do_start() {
   fi
 
   command -v node >/dev/null || fail "node not found. Install Node.js first."
+
+  # Docker proxy (optional — skip if NEMOCLAW_DOCKER_PROXY=0 or Docker not found)
+  if [ "${NEMOCLAW_DOCKER_PROXY:-1}" != "0" ]; then
+    local _docker_sock=""
+    for _candidate in /var/run/docker.sock \
+      "${HOME}/.docker/run/docker.sock" \
+      "${HOME}/.colima/default/docker.sock" \
+      "${HOME}/.config/colima/default/docker.sock" \
+      "/run/user/$(id -u)/docker.sock"; do
+      if [ -r "$_candidate" ] && [ -w "$_candidate" ]; then
+        _docker_sock="$_candidate"
+        break
+      fi
+    done
+    if [ -n "$_docker_sock" ]; then
+      start_service docker-proxy \
+        node "$REPO_DIR/scripts/docker-proxy.js"
+    else
+      warn "Docker socket not found — docker-proxy will not start."
+      warn "Install Docker and ensure the socket is accessible, or set NEMOCLAW_DOCKER_PROXY=0 to suppress this warning."
+    fi
+  fi
 
   # Verify sandbox is running
   if command -v openshell >/dev/null 2>&1; then
@@ -147,7 +172,28 @@ do_start() {
       node "$REPO_DIR/scripts/telegram-bridge.js"
   fi
 
-  # 3. cloudflared tunnel
+  # 3. Gateway relay — bridges localhost:DASHBOARD_PORT to the k3s container IP.
+  # The openshell forward SSH tunnel only supports SFTP and does not pass TCP
+  # channel data; this relay connects directly to the docker network IP where
+  # kubectl port-forward has bound the gateway port inside the container.
+  local _gw_container_ip
+  _gw_container_ip="$(docker inspect openshell-cluster-"${SANDBOX_NAME}" \
+    --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null \
+    | head -1 || true)"
+  if [ -n "$_gw_container_ip" ]; then
+    # Ensure kubectl port-forward is running inside the container
+    docker exec -d openshell-cluster-"${SANDBOX_NAME}" \
+      kubectl port-forward pod/"${SANDBOX_NAME}" "${DASHBOARD_PORT}:${DASHBOARD_PORT}" \
+      -n openshell --address 0.0.0.0 >/dev/null 2>&1 || true
+    sleep 1
+    start_service gateway-relay \
+      python3 "$REPO_DIR/scripts/gateway-relay.py" \
+      "$DASHBOARD_PORT" "$_gw_container_ip" "$DASHBOARD_PORT"
+  else
+    warn "openshell-cluster-${SANDBOX_NAME} container not found — gateway-relay will not start."
+  fi
+
+  # 4. cloudflared tunnel
   if command -v cloudflared >/dev/null 2>&1; then
     start_service cloudflared \
       cloudflared tunnel --url "http://localhost:$DASHBOARD_PORT"
@@ -183,10 +229,23 @@ do_start() {
     printf "  │  Public URL:  %-40s│\n" "$tunnel_url"
   fi
 
+  if is_running docker-proxy; then
+    local proxy_port="${NEMOCLAW_DOCKER_PROXY_PORT:-2376}"
+    printf "  │  Docker proxy: tcp://host.openshell.internal:%-6s │\n" "${proxy_port}"
+  else
+    echo "  │  Docker proxy: not started                          │"
+  fi
+
   if is_running telegram-bridge; then
     echo "  │  Telegram:    bridge running                        │"
   else
     echo "  │  Telegram:    not started (no token)                │"
+  fi
+
+  if is_running gateway-relay; then
+    echo "  │  Gateway:     relay running (localhost:${DASHBOARD_PORT})    │"
+  else
+    echo "  │  Gateway:     relay not started                     │"
   fi
 
   echo "  │                                                     │"

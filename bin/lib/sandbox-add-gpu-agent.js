@@ -46,6 +46,7 @@ function _sleep(ms) {
 async function addGpuAgent(agentName, opts = {}) {
   const quiet   = opts.quiet || false;
   const sleepFn = opts._sleep || _sleep;
+  const model   = opts.model || null;
 
   // ── Resolve parent ──────────────────────────────────────────────────────
   let parentName = opts.parentName || "";
@@ -166,7 +167,7 @@ async function addGpuAgent(agentName, opts = {}) {
     `${sshBase} "chmod 755 /sandbox/.openclaw 2>/dev/null; ` +
     `chmod 755 /sandbox/.openclaw/logs 2>/dev/null; ` +
     `chown sandbox:sandbox /sandbox/.openclaw/logs 2>/dev/null; ` +
-    `HOME=/sandbox nohup openclaw gateway run > /sandbox/gateway.log 2>&1 &"`,
+    `HTTPS_PROXY=http://10.200.0.1:3128 NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_OPTIONS=--use-env-proxy HOME=/sandbox nohup openclaw gateway run > /sandbox/gateway.log 2>&1 &"`,
     { ignoreError: true },
   );
 
@@ -201,6 +202,7 @@ async function addGpuAgent(agentName, opts = {}) {
       parentAgent:    parentName,
       nonInteractive: true,
       skipGithub:     false,
+      model,
     });
   } catch (_e) {
     // sandbox-init errors don't fail the GPU agent creation

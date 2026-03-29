@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Network policy preset: Docker proxy access.
+#
+# Allows the sandbox agent to reach the host-side Docker proxy at
+# host.openshell.internal:2376 so it can run `docker` and `docker compose`
+# commands.  The proxy enforces a strict allowlist of Docker Engine API
+# operations server-side (see scripts/docker-proxy.js).
+#
+# Apply alongside the `docker` preset (registry access) so agents can also
+# pull images:
+#
+#   nemoclaw sandbox-init <name> --policy docker --policy docker-proxy
+#   # or at onboard time: answer "Y" when asked about Docker support
+
+preset:
+  name: docker-proxy
+  description: "Host-side Docker proxy access for agent Docker/Compose operations"
+
+network_policies:
+  docker_proxy:
+    name: docker_proxy
+    endpoints:
+      - host: host.openshell.internal
+        port: 2376
+        protocol: rest
+        enforcement: enforce
+        tls: none
+        rules:
+          - allow: { method: GET,    path: "/v*/version" }
+          - allow: { method: GET,    path: "/v*/info" }
+          - allow: { method: GET,    path: "/_ping" }
+          - allow: { method: HEAD,   path: "/_ping" }
+          - allow: { method: GET,    path: "/v*/containers/**" }
+          - allow: { method: POST,   path: "/v*/containers/**" }
+          - allow: { method: DELETE, path: "/v*/containers/**" }
+          - allow: { method: GET,    path: "/v*/images/**" }
+          - allow: { method: POST,   path: "/v*/images/**" }
+          - allow: { method: DELETE, path: "/v*/images/**" }
+          - allow: { method: GET,    path: "/v*/networks/**" }
+          - allow: { method: GET,    path: "/v*/volumes/**" }
+          - allow: { method: GET,    path: "/v*/events" }
+          - allow: { method: POST,   path: "/v*/containers/**" }
+    binaries:
+      - { path: /usr/bin/docker }
+      - { path: /usr/libexec/docker/cli-plugins/docker-compose }

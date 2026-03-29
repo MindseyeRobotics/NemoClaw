@@ -15,13 +15,20 @@
 #        diffusers, accelerate, bitsandbytes, vllm-optional), and all the
 #        openclaw directory structure expected by the OpenShell agent runtime.
 
-FROM nvidia/cuda:12.6.3-devel-ubuntu24.04
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    # Docker CLI inside sandbox connects to the host-side proxy.
+    DOCKER_HOST=tcp://host.openshell.internal:2376 \
+    # Bypass proxy for Docker proxy traffic (prevents "unknown scheme: http").
+    no_proxy=host.openshell.internal,127.0.0.1,localhost,::1 \
+    NO_PROXY=host.openshell.internal,127.0.0.1,localhost,::1 \
+    # Xvfb virtual framebuffer launched by nemoclaw-start.sh.
+    DISPLAY=:99
 
 # ── System packages ──────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -43,6 +50,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # CUDA compilation support
         ninja-build \
         cmake \
+        # Virtual framebuffer for headless GUI apps + screenshot tool
+        xvfb \
+        scrot \
+        x11-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Docker CLI (no daemon) — install from Docker's official repo to get a
+# version compatible with the host daemon (29.x). Ubuntu 24.04's docker.io
+# (20.10-era) has broken HTTP hijack over TCP, causing `docker run` to hang
+# when DOCKER_HOST is a TCP endpoint (the docker-proxy case).
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node 22 (Ubuntu 24.04 ships Node 18 by default)
@@ -100,14 +124,12 @@ RUN npm install -g openclaw@2026.3.11 \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
 # ── Python AI stack ──────────────────────────────────────────────────────────
-# PyTorch with CUDA 12.6 wheels, HuggingFace ecosystem
-# Pin major versions; patch updates are safe to float within a rebuild.
+# PyTorch with CUDA 12.8 wheels — supports Blackwell (sm_120, RTX 5070/5090).
+# CUDA 12.6 wheels (torch 2.6.0) only supported up to Ada Lovelace (sm_90).
+# Use --index-url (not --extra-index-url) per PyTorch install matrix.
 RUN pip3 install --no-cache-dir --break-system-packages \
-        # PyTorch — CUDA 12.6
-        torch==2.6.0+cu126 \
-        torchvision==0.21.0+cu126 \
-        torchaudio==2.6.0+cu126 \
-        --extra-index-url https://download.pytorch.org/whl/cu126
+        torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cu128
 
 RUN pip3 install --no-cache-dir --break-system-packages \
         # HuggingFace

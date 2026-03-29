@@ -62,7 +62,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iproute2=6.1.0-3 \
         iptables=1.8.9-2 \
         libcap2-bin=1:2.66-4+deb12u2+b2 \
+        # Virtual framebuffer for headless GUI apps + screenshot tool
+        xvfb \
+        scrot \
+        x11-utils \
     && rm -rf /var/lib/apt/lists/*
+
+# Docker CLI (no daemon) — install from Docker's official repo to get a
+# version compatible with the host daemon (29.x). Debian bookworm's
+# docker.io (20.10) has broken HTTP hijack over TCP, causing `docker run`
+# to hang when DOCKER_HOST is a TCP endpoint (the docker-proxy case).
+# Only the CLI package is needed; the daemon runs on the host.
+# hadolint ignore=DL3009
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+# DOCKER_HOST: Docker CLI inside sandbox connects to the host-side proxy.
+# DISPLAY:     Xvfb virtual framebuffer launched by nemoclaw-start.sh.
+# NO_PROXY:    Bypass the openshell HTTP proxy for Docker proxy traffic;
+#              without this Docker CLI errors with "unknown scheme: http".
+ENV DOCKER_HOST=tcp://host.openshell.internal:2376 \
+    DISPLAY=:99 \
+    no_proxy=host.openshell.internal,127.0.0.1,localhost,::1 \
+    NO_PROXY=host.openshell.internal,127.0.0.1,localhost,::1
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of

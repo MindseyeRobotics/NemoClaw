@@ -89,14 +89,14 @@ inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
 inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
-origins = ['http://127.0.0.1:18789']; \
+origins = ['http://127.0.0.1:18789', 'http://10.200.0.1:18789']; \
 origins = list(dict.fromkeys(origins + [chat_origin])); \
 providers = { \
     provider_key: { \
         'baseUrl': inference_base_url, \
         'apiKey': 'unused', \
         'api': inference_api, \
-        'models': [{**({'compat': inference_compat} if inference_compat else {}), 'id': model, 'name': primary_model_ref, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
+        'models': [{**({'compat': inference_compat} if inference_compat else {}), 'id': model, 'name': primary_model_ref, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 200000, 'maxTokens': 8192}] \
     } \
 }; \
 config = { \
@@ -105,12 +105,13 @@ config = { \
     'channels': {'defaults': {'configWrites': False}}, \
     'gateway': { \
         'mode': 'local', \
+        'bind': 'lan', \
         'controlUi': { \
             'allowInsecureAuth': True, \
             'dangerouslyDisableDeviceAuth': True, \
             'allowedOrigins': origins, \
         }, \
-        'trustedProxies': ['127.0.0.1', '::1'], \
+        'trustedProxies': ['127.0.0.1', '::1', '10.200.0.0/24'], \
         'auth': {'token': secrets.token_hex(32)} \
     } \
 }; \

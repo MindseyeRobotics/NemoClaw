@@ -72,11 +72,27 @@ function defaultAgentsMd(agentName) {
 
 You are ${agentName}.
 
+## Shared Workspace
+All agents share a single writable workspace. Use these canonical paths:
+
+- **Workspace root**: \`/sandbox/.openclaw/workspace/\`  (shared; readable and writable by all agents)
+- **Git repositories**: \`/sandbox/.openclaw/workspace/git/\`  ← clone ALL repos here
+- **Notes / memory**: \`/sandbox/.openclaw/workspace/MEMORY.md\`
+
+### Rules for working with code
+- Always clone into \`/sandbox/.openclaw/workspace/git/<repo-name>/\`
+  Example: \`git clone https://github.com/org/repo /sandbox/.openclaw/workspace/git/repo\`
+- Never clone into \`/sandbox\` directly or any path outside the workspace.
+- All file edits, builds, and scripts must run from inside the repo directory under \`git/\`.
+- Do NOT invent sub-paths like \`workspace-main\` or \`workspace-cortana\`. There is only one workspace
+  directory. Writing to any other path under \`/sandbox/.openclaw/\` will fail (read-only mount).
+
 ## Coordination Rules
 - Work on one feature branch at a time.
 - Commit with conventional commit messages: <type>(<scope>): <summary>
 - Do not push to main without explicit user confirmation.
-- Leave a note in MEMORY.md if you are interrupted mid-task.
+- Leave a note in \`/sandbox/.openclaw/workspace/MEMORY.md\` if you are interrupted mid-task.
+- When handing off to another agent, write a summary of current state to the workspace before exiting.
 `;
 }
 
@@ -128,7 +144,7 @@ function resolveFileContent(filePath, defaultContent) {
  * If --parent-agent is given, appends this agent ID to the parent's
  * subagents.allowAgents list.
  */
-function patchOpenClawConfig(agentId, agentName, parentAgentId) {
+function patchOpenClawConfig(agentId, agentName, parentAgentId, model) {
   const configPath = path.join(os.homedir(), ".openclaw", "openclaw.json");
   let config = {};
   try {
@@ -138,7 +154,14 @@ function patchOpenClawConfig(agentId, agentName, parentAgentId) {
   } catch { /* start fresh */ }
 
   if (!config.agents) config.agents = { defaults: {}, list: [] };
+  if (!config.agents.defaults) config.agents.defaults = {};
   if (!Array.isArray(config.agents.list)) config.agents.list = [];
+
+  // Ensure defaults.workspace points to the writable data dir so the
+  // gateway never tries to mkdir under the read-only state dir.
+  if (!config.agents.defaults.workspace) {
+    config.agents.defaults.workspace = "/sandbox/.openclaw-data/workspace";
+  }
 
   // Upsert agent entry
   const existingIdx = config.agents.list.findIndex((a) => a.id === agentId);
@@ -146,6 +169,8 @@ function patchOpenClawConfig(agentId, agentName, parentAgentId) {
     ? config.agents.list[existingIdx]
     : { id: agentId };
   entry.name = agentName;
+  entry.workspace = "/sandbox/.openclaw-data/workspace";
+  if (model) entry.model = { primary: model };
   if (existingIdx >= 0) {
     config.agents.list[existingIdx] = entry;
   } else {
@@ -185,7 +210,14 @@ async function sandboxInit(sandboxName, opts = {}) {
     skipGithub = false,
     parentAgentId = null,
     nonInteractive = false,
+    enableDocker = false,
+    model = null,
   } = opts;
+
+  // Expand docker flag into the two required policy presets
+  const allPolicies = enableDocker
+    ? [...extraPolicies, "docker", "docker-proxy"]
+    : [...extraPolicies];
 
   // ── Validate sandbox exists in registry ─────────────────────
 
@@ -242,8 +274,8 @@ async function sandboxInit(sandboxName, opts = {}) {
   console.log("  [2/4] Applying policies");
 
   const policiestoApply = skipGithub
-    ? [...extraPolicies]
-    : ["github", ...extraPolicies];
+    ? [...allPolicies]
+    : ["github", ...allPolicies];
 
   if (policiestoApply.length === 0) {
     console.log("    • No policies to apply (--no-github and no --policy flags)");
@@ -257,6 +289,28 @@ async function sandboxInit(sandboxName, opts = {}) {
         console.log("\x1b[33m⚠\x1b[0m (skipped)");
         console.warn(`      ${err.message}`);
       }
+    }
+  }
+
+  // ── npm prefix ───────────────────────────────────────────────
+  // /usr is read-only inside the sandbox, so npm global installs must go to
+  // a writable location. Upload a .npmrc that redirects the global prefix.
+  // IMPORTANT: source file must be named ".npmrc" so openshell upload
+  // preserves the filename when copying into '/sandbox/'.
+  {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-"));
+    // File must be named .npmrc — openshell upload uses the source filename
+    const npmrcFile = path.join(tmpDir, ".npmrc");
+    try {
+      fs.writeFileSync(npmrcFile, "prefix=/sandbox/.npm-global\n", { mode: 0o644 });
+      runner.run(
+        `openshell sandbox upload ${runner.shellQuote(sandboxName)} ${runner.shellQuote(npmrcFile)} '/sandbox/'`,
+        { ignoreError: true },
+      );
+    } catch { /* best effort — sandbox may be restarted later */ }
+    finally {
+      try { fs.unlinkSync(npmrcFile); } catch { /* best effort */ }
+      try { fs.rmdirSync(tmpDir); } catch { /* best effort */ }
     }
   }
 
@@ -287,16 +341,35 @@ async function sandboxInit(sandboxName, opts = {}) {
     }
 
     if (ghToken) {
-      // Pass token into sandbox as an env hint via openshell exec
+      // Upload .git-credentials directly via openshell sandbox upload so the
+      // token is never echoed to the terminal. Then run the non-sensitive
+      // `git config` line via connect (no secrets in that script).
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gh-"));
+      const credFile = path.join(tmpDir, ".git-credentials");
+      const gitconfigFile = path.join(tmpDir, ".gitconfig");
       try {
+        // Upload .git-credentials — never echoed to terminal
+        fs.writeFileSync(credFile, `https://x-token:${ghToken}@github.com\n`, { mode: 0o600 });
         runner.run(
-          `openshell sandbox exec ${runner.shellQuote(sandboxName)} -- bash -c ${runner.shellQuote(
-            `git config --global credential.helper store && printf 'https://x-token:%s@github.com\n' ${runner.shellQuote(ghToken)} > ~/.git-credentials && chmod 600 ~/.git-credentials`
-          )}`,
+          `openshell sandbox upload ${runner.shellQuote(sandboxName)} ${runner.shellQuote(credFile)} '/sandbox/'`,
         );
+
+        // Upload .gitconfig with credential.helper=store set.
+        // Avoids using `openshell sandbox connect` (PTY sessions don't reliably
+        // exit on stdin EOF). Sandbox containers are initialised fresh so
+        // overwriting ~/.gitconfig is safe here.
+        fs.writeFileSync(gitconfigFile, "[credential]\n\thelper = store\n", { mode: 0o644 });
+        runner.run(
+          `openshell sandbox upload ${runner.shellQuote(sandboxName)} ${runner.shellQuote(gitconfigFile)} '/sandbox/'`,
+        );
+
         console.log("    \x1b[32m✓\x1b[0m GitHub credentials configured in sandbox");
       } catch {
         console.warn("    \x1b[33m⚠\x1b[0m Could not configure git credentials in sandbox (sandbox may not be running)");
+      } finally {
+        try { fs.unlinkSync(credFile); } catch { /* best effort */ }
+        try { fs.unlinkSync(gitconfigFile); } catch { /* best effort */ }
+        try { fs.rmdirSync(tmpDir); } catch { /* best effort */ }
       }
     } else {
       console.log("    • Skipped (no token available)");
@@ -313,7 +386,7 @@ async function sandboxInit(sandboxName, opts = {}) {
 
   process.stdout.write(`    • openclaw.json (id: ${agentId}) … `);
   try {
-    patchOpenClawConfig(agentId, agentName, parentAgentId);
+    patchOpenClawConfig(agentId, agentName, parentAgentId, model);
     console.log("\x1b[32m✓\x1b[0m");
     if (parentAgentId) {
       console.log(`    • Wired as subagent of '${parentAgentId}' \x1b[32m✓\x1b[0m`);

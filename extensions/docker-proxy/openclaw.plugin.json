@@ -1,0 +1,21 @@
+{
+  "id": "docker-proxy",
+  "name": "Docker Proxy",
+  "description": "Docker container management tools via the NemoClaw host-side Docker proxy. Provides docker_run, docker_ps, docker_images, docker_pull, docker_stop, docker_rm, and docker_logs tools.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dockerHost": {
+        "type": "string",
+        "description": "Docker proxy endpoint (default: inferred from DOCKER_HOST env or tcp://host.openshell.internal:2376)"
+      }
+    }
+  },
+  "uiHints": {
+    "dockerHost": {
+      "label": "Docker Proxy Host",
+      "help": "TCP endpoint of the NemoClaw Docker proxy (e.g. tcp://host.openshell.internal:2376)"
+    }
+  }
+}

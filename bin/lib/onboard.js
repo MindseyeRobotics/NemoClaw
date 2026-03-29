@@ -37,6 +37,7 @@ const nim = require("./nim");
 const policies = require("./policies");
 const { checkPortAvailable } = require("./preflight");
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
+const FORCE_GPU_SANDBOX = process.env.NEMOCLAW_FORCE_GPU_SANDBOX === "1";
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
@@ -667,6 +668,10 @@ async function validateOpenAiLikeSelection(
   retryMessage = "Please choose a provider/model again."
 ) {
   const apiKey = credentialEnv ? getCredential(credentialEnv) : "";
+  if (process.env.NEMOCLAW_SKIP_PROBE === "1") {
+    note("  [non-interactive] Skipping endpoint probe (NEMOCLAW_SKIP_PROBE=1)");
+    return "openai-completions";
+  }
   const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey);
   if (!probe.ok) {
     console.error(`  ${label} endpoint validation failed.`);
@@ -690,6 +695,10 @@ async function validateAnthropicSelectionWithRetryMessage(
   retryMessage = "Please choose a provider/model again."
 ) {
   const apiKey = getCredential(credentialEnv);
+  if (process.env.NEMOCLAW_SKIP_PROBE === "1") {
+    note("  [non-interactive] Skipping endpoint probe (NEMOCLAW_SKIP_PROBE=1)");
+    return "anthropic-messages";
+  }
   const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
   if (!probe.ok) {
     console.error(`  ${label} endpoint validation failed.`);
@@ -1312,6 +1321,10 @@ async function startGateway(_gpu) {
   destroyGateway();
 
   const gwArgs = ["--name", GATEWAY_NAME];
+  if (FORCE_GPU_SANDBOX) {
+    gwArgs.push("--gpu");
+    note("  [non-interactive] Starting gateway with GPU passthrough (--gpu)");
+  }
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
   // routed through a host-side provider (Ollama, vLLM, or cloud API) — the
   // sandbox itself does not need direct GPU access. Passing --gpu causes
@@ -1424,7 +1437,12 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
     "--name", sandboxName,
     "--policy", basePolicyPath,
   ];
-  // --gpu is intentionally omitted. See comment in startGateway().
+  // --gpu is intentionally omitted by default. Set
+  // NEMOCLAW_FORCE_GPU_SANDBOX=1 to explicitly request GPU devices.
+  if (FORCE_GPU_SANDBOX) {
+    createArgs.push("--gpu");
+    note("  [non-interactive] Forcing GPU-enabled sandbox (--gpu)");
+  }
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || "http://127.0.0.1:18789";
@@ -1945,7 +1963,7 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null, 
     const env = resolvedCredentialEnv ? { [resolvedCredentialEnv]: process.env[resolvedCredentialEnv] } : {};
     upsertProvider(provider, config.providerType, resolvedCredentialEnv, resolvedEndpointUrl, env);
     const args = ["inference", "set"];
-    if (config.skipVerify) {
+    if (config.skipVerify || process.env.NEMOCLAW_SKIP_PROBE === "1") {
       args.push("--no-verify");
     }
     args.push("--provider", provider, "--model", model);

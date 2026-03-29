@@ -10,6 +10,7 @@
 // listening and starting it if needed.
 
 const { spawnSync } = require("child_process");
+const path = require("path");
 const runner = require("./runner");
 
 const DASHBOARD_PORT = 18789;
@@ -62,7 +63,7 @@ function sandboxResume(sandboxName, opts = {}) {
     // HOME=/sandbox ensures openclaw finds ~/.openclaw/openclaw.json.
     runner.run(
       `openshell doctor exec -- kubectl exec ${sandboxName} -n openshell -- ` +
-        `bash -c 'HOME=/sandbox nohup openclaw gateway run > /tmp/gateway.log 2>&1 &'`,
+        `bash -c 'HTTPS_PROXY=http://10.200.0.1:3128 NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_OPTIONS=--use-env-proxy HOME=/sandbox nohup openclaw gateway run > /tmp/gateway.log 2>&1 &'`,
       { ignoreError: true },
     );
 
@@ -100,9 +101,38 @@ function sandboxResume(sandboxName, opts = {}) {
     }
   }
 
-  // 3. (Re-)establish port forward
-  runner.run(`openshell forward stop ${DASHBOARD_PORT} ${qn} 2>/dev/null || true`, { ignoreError: true });
-  runner.run(`openshell forward start --background ${DASHBOARD_PORT} ${qn} 2>/dev/null || true`, { ignoreError: true });
+  // 3. (Re-)establish port forward via gateway-relay (kubectl port-forward inside
+  // the k3s container, relayed through a Python TCP proxy on localhost).
+  // The openshell SSH forward only supports SFTP; it does not pass TCP channel data.
+  const containerName = `openshell-cluster-${sandboxName}`;
+  const relayScript = path.join(__dirname, "..", "..", "scripts", "gateway-relay.py");
+  // Get docker network IP of the k3s container
+  const containerIp = runner.runCapture(
+    `docker inspect ${runner.shellQuote(containerName)} --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null | head -1`,
+    { ignoreError: true }
+  ).trim();
+
+  if (containerIp) {
+    // Start kubectl port-forward inside the container (idempotent; fails silently if already running)
+    runner.run(
+      `docker exec -d ${runner.shellQuote(containerName)} kubectl port-forward pod/${runner.shellQuote(sandboxName)} ${DASHBOARD_PORT}:${DASHBOARD_PORT} -n openshell --address 0.0.0.0 2>/dev/null || true`,
+      { ignoreError: true }
+    );
+    // Kill any existing relay on this port then start fresh
+    runner.run(
+      `python3 -c "import socket; s=socket.socket(); s.settimeout(0.1); s.connect(('127.0.0.1',${DASHBOARD_PORT})); s.close()" 2>/dev/null && ` +
+      `pkill -f "gateway-relay.py ${DASHBOARD_PORT}" 2>/dev/null || true`,
+      { ignoreError: true }
+    );
+    runner.run(
+      `nohup python3 ${runner.shellQuote(relayScript)} ${DASHBOARD_PORT} ${runner.shellQuote(containerIp)} ${DASHBOARD_PORT} >/tmp/gateway-relay.log 2>&1 &`,
+      { ignoreError: true }
+    );
+  } else {
+    // Fallback: try the openshell SSH forward (may not work for WS but worth attempting)
+    runner.run(`openshell forward stop ${DASHBOARD_PORT} ${qn} 2>/dev/null || true`, { ignoreError: true });
+    runner.run(`openshell forward start --background ${DASHBOARD_PORT} ${qn} 2>/dev/null || true`, { ignoreError: true });
+  }
 
   // 4. Retrieve auth token
   const token = runner.runCapture(
