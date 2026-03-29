@@ -176,13 +176,23 @@ do_start() {
   # The openshell forward SSH tunnel only supports SFTP and does not pass TCP
   # channel data; this relay connects directly to the docker network IP where
   # kubectl port-forward has bound the gateway port inside the container.
-  local _gw_container_ip
-  _gw_container_ip="$(docker inspect openshell-cluster-"${SANDBOX_NAME}" \
-    --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null \
-    | head -1 || true)"
-  if [ -n "$_gw_container_ip" ]; then
+  # Find the openshell k3s container that hosts the sandbox pod (the container
+  # name is not necessarily openshell-cluster-<sandbox>; search all candidates).
+  local _gw_container _gw_container_ip
+  _gw_container=""
+  _gw_container_ip=""
+  for _c in $(docker ps --format '{{.Names}}' 2>/dev/null | grep '^openshell-cluster-' || true); do
+    if docker exec "$_c" kubectl get pod/"${SANDBOX_NAME}" -n openshell >/dev/null 2>&1; then
+      _gw_container="$_c"
+      _gw_container_ip="$(docker inspect "$_c" \
+        --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null \
+        | head -1 || true)"
+      break
+    fi
+  done
+  if [ -n "$_gw_container" ] && [ -n "$_gw_container_ip" ]; then
     # Ensure kubectl port-forward is running inside the container
-    docker exec -d openshell-cluster-"${SANDBOX_NAME}" \
+    docker exec -d "$_gw_container" \
       kubectl port-forward pod/"${SANDBOX_NAME}" "${DASHBOARD_PORT}:${DASHBOARD_PORT}" \
       -n openshell --address 0.0.0.0 >/dev/null 2>&1 || true
     sleep 1
@@ -190,7 +200,7 @@ do_start() {
       python3 "$REPO_DIR/scripts/gateway-relay.py" \
       "$DASHBOARD_PORT" "$_gw_container_ip" "$DASHBOARD_PORT"
   else
-    warn "openshell-cluster-${SANDBOX_NAME} container not found — gateway-relay will not start."
+    warn "No openshell-cluster container found with pod/${SANDBOX_NAME} — gateway-relay will not start."
   fi
 
   # 4. cloudflared tunnel

@@ -104,15 +104,20 @@ function sandboxResume(sandboxName, opts = {}) {
   // 3. (Re-)establish port forward via gateway-relay (kubectl port-forward inside
   // the k3s container, relayed through a Python TCP proxy on localhost).
   // The openshell SSH forward only supports SFTP; it does not pass TCP channel data.
-  const containerName = `openshell-cluster-${sandboxName}`;
+  // Find which openshell-cluster-* container hosts the sandbox pod.
+  // The container name is not necessarily openshell-cluster-<sandboxName>.
   const relayScript = path.join(__dirname, "..", "..", "scripts", "gateway-relay.py");
-  // Get docker network IP of the k3s container
-  const containerIp = runner.runCapture(
-    `docker inspect ${runner.shellQuote(containerName)} --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null | head -1`,
+  const containerName = runner.runCapture(
+    `docker ps --format '{{.Names}}' 2>/dev/null | grep '^openshell-cluster-' | while read c; do ` +
+    `docker exec "$c" kubectl get pod/${runner.shellQuote(sandboxName)} -n openshell >/dev/null 2>&1 && echo "$c" && break; done | head -1`,
     { ignoreError: true }
   ).trim();
+  const containerIp = containerName ? runner.runCapture(
+    `docker inspect ${runner.shellQuote(containerName)} --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null | head -1`,
+    { ignoreError: true }
+  ).trim() : "";
 
-  if (containerIp) {
+  if (containerName && containerIp) {
     // Start kubectl port-forward inside the container (idempotent; fails silently if already running)
     runner.run(
       `docker exec -d ${runner.shellQuote(containerName)} kubectl port-forward pod/${runner.shellQuote(sandboxName)} ${DASHBOARD_PORT}:${DASHBOARD_PORT} -n openshell --address 0.0.0.0 2>/dev/null || true`,

@@ -1,0 +1,21 @@
+{
+  "id": "claw3d",
+  "name": "Claw3D",
+  "description": "Integration with Claw3D — a 3D virtual office platform. Provides tools to send office messages, query office layout, manage studio settings, and interact with the Claw3D REST API.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "baseUrl": {
+        "type": "string",
+        "description": "Base URL of the Claw3D instance (default: http://localhost:3000)"
+      }
+    }
+  },
+  "uiHints": {
+    "baseUrl": {
+      "label": "Claw3D Base URL",
+      "help": "HTTP URL of the running Claw3D Next.js server (e.g. http://localhost:3000)"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Network policy preset: Claw3D integration.
+#
+# Allows the sandbox agent to reach a local Claw3D instance at
+# host.openshell.internal:3000 (the NemoClaw host via the openshell
+# bridge network) so it can use the claw3d plugin tools.
+#
+# Apply at onboard or init time:
+#   nemoclaw sandbox-init <name> --policy claw3d
+
+preset:
+  name: claw3d
+  description: "Claw3D 3D virtual office REST API access"
+
+network_policies:
+  claw3d:
+    name: claw3d
+    endpoints:
+      - host: host.openshell.internal
+        port: 3000
+        protocol: rest
+        enforcement: enforce
+        tls: none
+        rules:
+          - allow: { method: GET,  path: "/api/office**" }
+          - allow: { method: PUT,  path: "/api/office**" }
+          - allow: { method: POST, path: "/api/office**" }
+          - allow: { method: GET,  path: "/api/studio**" }
+          - allow: { method: PUT,  path: "/api/studio**" }
+          - allow: { method: GET,  path: "/api/gateway**" }
+          - allow: { method: PUT,  path: "/api/gateway**" }
