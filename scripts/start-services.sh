@@ -196,6 +196,11 @@ do_start() {
       kubectl port-forward pod/"${SANDBOX_NAME}" "${DASHBOARD_PORT}:${DASHBOARD_PORT}" \
       -n openshell --address 0.0.0.0 >/dev/null 2>&1 || true
     sleep 1
+    # Fix .openclaw-data permissions so gateway user (in sandbox group) can write
+    # session files. These reset on pod recreation, so we re-apply on every start.
+    docker exec "$_gw_container" kubectl exec "${SANDBOX_NAME}" -n openshell -- \
+      sh -c 'find /sandbox/.openclaw-data -type d | xargs chmod g+w 2>/dev/null; find /sandbox/.openclaw-data \( -name "*.json" -o -name "*.jsonl" \) | xargs chmod g+rw 2>/dev/null' \
+      >/dev/null 2>&1 || true
     start_service gateway-relay \
       python3 "$REPO_DIR/scripts/gateway-relay.py" \
       "$DASHBOARD_PORT" "$_gw_container_ip" "$DASHBOARD_PORT"
