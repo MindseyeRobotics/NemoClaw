@@ -23,7 +23,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NEMOCLAW_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 IMAGE_NAME="nemoclaw-sandbox-ai"
-IMAGE_TAG="v3"
+IMAGE_TAG="v4"
 IMAGE_REF="${IMAGE_NAME}:${IMAGE_TAG}"
 DASHBOARD_PORT=18789
 MAX_READY_WAIT=60

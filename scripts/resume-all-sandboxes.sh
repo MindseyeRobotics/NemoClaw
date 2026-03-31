@@ -7,65 +7,29 @@
 # re-mount each one via SSHFS so workspace files are accessible locally.
 set -euo pipefail
 
-# shellcheck disable=SC2139
-NEMOCLAW_CMD="node /home/mindseye/dev/merc/NemoClaw/bin/nemoclaw.js"
-MAX_GATEWAY_WAIT=120
-POLL_INTERVAL=3
-MOUNT_BASE="${HOME}/nemoclaw-sandbox"
-
-log() { echo "$(date '+%H:%M:%S') [nemoclaw-autostart] $*"; }
-
-nemoclaw_run() {
-  # Supports both "nemoclaw" and "node /path/to/nemoclaw.js" forms
-  # shellcheck disable=SC2086
-  ${NEMOCLAW_CMD} "$@"
-}
-
-# Wait for the gateway container to come up
-log "Waiting for gateway to become ready..."
-for i in $(seq 1 $((MAX_GATEWAY_WAIT / POLL_INTERVAL))); do
-  if openshell gateway info >/dev/null 2>&1; then
-    log "Gateway ready"
-    break
-  fi
-  if [[ "$i" -eq $((MAX_GATEWAY_WAIT / POLL_INTERVAL)) ]]; then
-    log "ERROR: Gateway did not become ready within ${MAX_GATEWAY_WAIT}s"
-    exit 1
-  fi
-  sleep "${POLL_INTERVAL}"
-done
-
-# Resume each sandbox in the registry
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SANDBOXES_FILE="${HOME}/.nemoclaw/sandboxes.json"
 RESUMED=0
 FAILED=0
 
-if [[ -f "${SANDBOXES_FILE}" ]]; then
-  while IFS= read -r name; do
-    [[ -z "${name}" ]] && continue
-    log "Resuming sandbox '${name}'..."
-    if nemoclaw_run "${name}" resume; then
-      log "  ✓ ${name} resumed"
-      RESUMED=$((RESUMED + 1))
-      # Mount the sandbox filesystem (clear stale mounts first)
-      local_mp="${MOUNT_BASE}/${name}"
-      if mountpoint -q "${local_mp}" 2>/dev/null; then
-        log "  ↳ ${name} already mounted at ${local_mp}"
-      else
-        # Force-clear any stale/broken mount before attempting to mount
-        fusermount -uz "${local_mp}" 2>/dev/null || true
-        log "  ↳ Mounting ${name}..."
-        if nemoclaw_run "${name}" mount; then
-          log "  ✓ ${name} mounted at ${local_mp}"
-        else
-          log "  ✗ ${name} mount failed (check: nemoclaw ${name} mount)"
-        fi
-      fi
-    else
-      log "  ✗ ${name} resume failed (check: nemoclaw ${name} status)"
-      FAILED=$((FAILED + 1))
-    fi
-  done < <(python3 -c "
+log() { echo "$(date '+%H:%M:%S') [nemoclaw-autostart] $*"; }
+
+if [[ ! -f "${SANDBOXES_FILE}" ]]; then
+  log "No sandboxes registry found at ${SANDBOXES_FILE}"
+  exit 0
+fi
+
+while IFS= read -r name; do
+  [[ -z "${name}" ]] && continue
+  log "Resuming sandbox '${name}'..."
+  if bash "${SCRIPT_DIR}/resume.sh" "${name}"; then
+    log "  ✓ ${name} resumed"
+    RESUMED=$((RESUMED + 1))
+  else
+    log "  ✗ ${name} resume failed (check: nemoclaw ${name} status)"
+    FAILED=$((FAILED + 1))
+  fi
+done < <(python3 -c "
 import json, sys
 d = json.load(open('${SANDBOXES_FILE}'))
 sbs = d.get('sandboxes', {})
@@ -74,7 +38,6 @@ if isinstance(sbs, dict):
 else:
     for sb in sbs: print(sb.get('name',''))
 " 2>/dev/null || true)
-fi
 
 log "Done: ${RESUMED} resumed, ${FAILED} failed"
 [[ "${FAILED}" -eq 0 ]]

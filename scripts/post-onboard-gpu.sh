@@ -24,7 +24,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NEMOCLAW_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 IMAGE_NAME="nemoclaw-sandbox-ai"
-IMAGE_TAG="v3"
+IMAGE_TAG="v4"
 IMAGE_REF="${IMAGE_NAME}:${IMAGE_TAG}"
 DASHBOARD_PORT=18789
 MAX_READY_WAIT=60
@@ -129,12 +129,17 @@ openshell forward stop "${DASHBOARD_PORT}" "${SANDBOX_NAME}" 2>/dev/null || true
 openshell sandbox delete "${SANDBOX_NAME}" 2>/dev/null || true
 ok "Old sandbox removed"
 
-# ── Step 2: Build GPU image ──────────────────────────────────────────────────
-echo -e "  ${CYAN}[2/6]${NC} Building GPU image (${IMAGE_REF})"
-docker build -f "${NEMOCLAW_ROOT}/Dockerfile.sandbox-ai" \
-  -t "${IMAGE_REF}" \
-  "${NEMOCLAW_ROOT}" 2>&1 | tail -5
-ok "Image built: ${IMAGE_REF}"
+# ── Step 2: Build GPU image (skip if already present) ───────────────────────
+echo -e "  ${CYAN}[2/6]${NC} Ensuring GPU image exists (${IMAGE_REF})"
+if docker image inspect "${IMAGE_REF}" >/dev/null 2>&1; then
+  ok "Image ${IMAGE_REF} already present in Docker — skipping build"
+else
+  info "Building GPU image (${IMAGE_REF})..."
+  docker build -f "${NEMOCLAW_ROOT}/Dockerfile.sandbox-ai" \
+    -t "${IMAGE_REF}" \
+    "${NEMOCLAW_ROOT}" 2>&1 | tail -5
+  ok "Image built: ${IMAGE_REF}"
+fi
 
 # ── Step 3: Import into k3s containerd ───────────────────────────────────────
 echo -e "  ${CYAN}[3/6]${NC} Importing image into k3s"

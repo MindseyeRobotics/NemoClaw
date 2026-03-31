@@ -68,7 +68,7 @@ if ! echo "$SANDBOX_NAME" | grep -qE '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'; then
   fail "Invalid sandbox name: '$SANDBOX_NAME'"
 fi
 
-GATEWAY_NAME="nemoclaw"
+GATEWAY_NAME="${OPENSHELL_GATEWAY:-openshell}"
 CLUSTER_CONTAINER="openshell-cluster-${GATEWAY_NAME}"
 BACKUP_SCRIPT="${SCRIPT_DIR}/backup-workspace.sh"
 MOUNT_SCRIPT="${SCRIPT_DIR}/mount-sandbox.sh"

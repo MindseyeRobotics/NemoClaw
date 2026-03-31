@@ -60,9 +60,23 @@ do_backup() {
 
   local count=0
 
-  # Back up each data directory in full
+  # Back up each data directory in full, but skip workspace/git — git repos
+  # can be re-cloned from remote and dominate backup size unnecessarily.
   for d in "${BACKUP_DIRS[@]}"; do
-    if openshell sandbox download "$sandbox" "${DATA_ROOT}/${d}/" "${dest}/${d}/" 2>&1; then
+    if [ "$d" = "workspace" ]; then
+      # Download workspace sub-dirs individually, excluding git/
+      for sub in .openclaw memory; do
+        if openshell sandbox download "$sandbox" "${DATA_ROOT}/workspace/${sub}/" "${dest}/workspace/${sub}/" 2>/dev/null; then
+          info "  ✓ workspace/${sub}/"
+        fi
+      done
+      # Also grab any loose files one level under workspace/ (e.g. AGENTS.md etc)
+      openshell sandbox download "$sandbox" "${DATA_ROOT}/workspace/" "${dest}/workspace/" 2>/dev/null || true
+      # Remove the git dir from the download if it crept in
+      rm -rf "${dest}/workspace/git"
+      count=$((count + 1))
+      info "  ✓ workspace/ (git/ excluded — re-clone from remote)"
+    elif openshell sandbox download "$sandbox" "${DATA_ROOT}/${d}/" "${dest}/${d}/" 2>&1; then
       count=$((count + 1))
       info "  ✓ ${d}/"
     else
@@ -77,6 +91,18 @@ do_backup() {
 
   if [ "$count" -eq 0 ]; then
     fail "No data was backed up. Check that the sandbox '${sandbox}' exists and has data."
+  fi
+
+  # Remove any symlinks from the backup — symlinks (especially circular ones like
+  # ./_codeql_detected_source_root -> . or log/latest -> latest_build) cause
+  # "symbolic link loop" errors when openshell sandbox upload traverses the tree.
+  local symlink_count=0
+  while IFS= read -r -d '' link; do
+    rm -f "$link"
+    symlink_count=$((symlink_count + 1))
+  done < <(find "$dest" -type l -print0 2>/dev/null)
+  if [ "$symlink_count" -gt 0 ]; then
+    info "  Removed ${symlink_count} symlink(s) from backup (not needed for restore)"
   fi
 
   # Write a manifest so we know what's in this backup
@@ -103,11 +129,32 @@ do_restore() {
 
   for d in "${BACKUP_DIRS[@]}"; do
     if [ -d "${src}/${d}" ]; then
-      if openshell sandbox upload "$sandbox" "${src}/${d}/" "${DATA_ROOT}/${d}/" 2>&1; then
+      if [ "$d" = "workspace" ]; then
+        # Skip workspace/git — those repos must be re-cloned from remote.
+        # Upload each sub-dir of workspace/ except git/.
+        local ws_count=0
+        for sub in "${src}/workspace/"/*/; do
+          local sub_name
+          sub_name="$(basename "$sub")"
+          [ "$sub_name" = "git" ] && continue
+          if openshell sandbox upload "$sandbox" "$sub" "${DATA_ROOT}/workspace/${sub_name}/" 2>&1; then
+            ws_count=$((ws_count + 1))
+          fi
+        done
+        # Upload any loose files directly under workspace/
+        for f in "${src}/workspace/"*; do
+          [ -f "$f" ] || continue
+          openshell sandbox upload "$sandbox" "$f" "${DATA_ROOT}/workspace/" 2>/dev/null || true
+        done
         count=$((count + 1))
-        info "  ✓ ${d}/"
+        info "  ✓ workspace/ (${ws_count} sub-dirs, git/ skipped — re-clone from remote)"
       else
-        warn "  Failed to restore ${d}/"
+        if openshell sandbox upload "$sandbox" "${src}/${d}/" "${DATA_ROOT}/${d}/" 2>&1; then
+          count=$((count + 1))
+          info "  ✓ ${d}/"
+        else
+          warn "  Failed to restore ${d}/"
+        fi
       fi
     fi
   done
