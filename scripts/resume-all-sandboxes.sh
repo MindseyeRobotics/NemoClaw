@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SANDBOXES_FILE="${HOME}/.nemoclaw/sandboxes.json"
 RESUMED=0
 FAILED=0
+POST_RESUME_SYNC_SCRIPT="${NEMOCLAW_POST_RESUME_SYNC_SCRIPT:-${HOME}/dev/merc/agentic-foundry/agents/nemoclaw/sync.sh}"
 
 log() { echo "$(date '+%H:%M:%S') [nemoclaw-autostart] $*"; }
 
@@ -23,6 +24,16 @@ while IFS= read -r name; do
   [[ -z "${name}" ]] && continue
   log "Resuming sandbox '${name}'..."
   if bash "${SCRIPT_DIR}/resume.sh" "${name}"; then
+    if [[ "${name}" == "cortana" ]] && [[ -x "${POST_RESUME_SYNC_SCRIPT}" ]]; then
+      log "  ↻ running post-resume sync for '${name}'..."
+      if bash "${POST_RESUME_SYNC_SCRIPT}"; then
+        log "  ✓ post-resume sync applied"
+      else
+        log "  ✗ post-resume sync failed"
+        FAILED=$((FAILED + 1))
+        continue
+      fi
+    fi
     log "  ✓ ${name} resumed"
     RESUMED=$((RESUMED + 1))
   else
